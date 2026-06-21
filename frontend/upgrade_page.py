@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
-    QFrame, QMessageBox, QSizePolicy
+    QFrame, QMessageBox, QSizePolicy, QCheckBox
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QColor
@@ -154,6 +154,8 @@ class EquipmentSlot(QFrame):
 class UpgradePage(QWidget):
     gold_updated = Signal(int)
     stones_updated = Signal(int)
+    scrolls_updated = Signal(int)
+    charms_updated = Signal(int)
 
     def __init__(self, api_client: ApiClient, parent=None):
         super().__init__(parent)
@@ -162,6 +164,9 @@ class UpgradePage(QWidget):
         self.slots = {}
         self.equipment_list = []
         self._upgrade_pending = False
+        self._current_info = None
+        self.player_scrolls = 0
+        self.player_charms = 0
 
         self._init_ui()
         self.refresh_data()
@@ -274,6 +279,70 @@ class UpgradePage(QWidget):
 
         right_layout.addWidget(info_frame)
 
+        items_frame = QFrame()
+        items_frame.setStyleSheet("""
+            QFrame {
+                background-color: #252538;
+                border-radius: 8px;
+                padding: 10px;
+            }
+        """)
+        items_layout = QVBoxLayout(items_frame)
+        items_layout.setSpacing(8)
+
+        items_title = QLabel("辅助道具")
+        items_title_font = QFont()
+        items_title_font.setBold(True)
+        items_title.setFont(items_title_font)
+        items_title.setStyleSheet("color: #eee; font-size: 13px;")
+        items_layout.addWidget(items_title)
+
+        self.protect_checkbox = QCheckBox()
+        self.protect_checkbox.setStyleSheet("""
+            QCheckBox {
+                color: #ffaa88;
+                font-size: 13px;
+                spacing: 8px;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border-radius: 3px;
+                border: 1px solid #666;
+                background-color: #1a1a28;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #4a7acc;
+                border: 1px solid #5a9aff;
+            }
+        """)
+        self.protect_checkbox.stateChanged.connect(self._refresh_rate_display)
+        items_layout.addWidget(self.protect_checkbox)
+
+        self.lucky_checkbox = QCheckBox()
+        self.lucky_checkbox.setStyleSheet("""
+            QCheckBox {
+                color: #aaffaa;
+                font-size: 13px;
+                spacing: 8px;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border-radius: 3px;
+                border: 1px solid #666;
+                background-color: #1a1a28;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #4a7acc;
+                border: 1px solid #5a9aff;
+            }
+        """)
+        self.lucky_checkbox.stateChanged.connect(self._refresh_rate_display)
+        items_layout.addWidget(self.lucky_checkbox)
+
+        right_layout.addWidget(items_frame)
+
         self.upgrade_button = QPushButton("开始强化")
         self.upgrade_button.setEnabled(False)
         self.upgrade_button.setFixedHeight(50)
@@ -339,6 +408,39 @@ class UpgradePage(QWidget):
             self.gold_updated.emit(player["gold"])
         if player and player.get("enhance_stones") is not None:
             self.stones_updated.emit(player["enhance_stones"])
+        if player and player.get("protect_scrolls") is not None:
+            self.player_scrolls = player["protect_scrolls"]
+            self.scrolls_updated.emit(player["protect_scrolls"])
+            self._update_item_labels()
+        if player and player.get("lucky_charms") is not None:
+            self.player_charms = player["lucky_charms"]
+            self.charms_updated.emit(player["lucky_charms"])
+            self._update_item_labels()
+
+    def _update_item_labels(self):
+        self.protect_checkbox.setText(f"🛡 使用保护卷（失败不扣强化石）  持有：{self.player_scrolls} 张")
+        self.lucky_checkbox.setText(f"🍀 使用幸运符（成功率+15%）  持有：{self.player_charms} 张")
+        if self.player_scrolls <= 0:
+            self.protect_checkbox.setChecked(False)
+            self.protect_checkbox.setEnabled(False)
+        else:
+            self.protect_checkbox.setEnabled(True)
+        if self.player_charms <= 0:
+            self.lucky_checkbox.setChecked(False)
+            self.lucky_checkbox.setEnabled(False)
+        else:
+            self.lucky_checkbox.setEnabled(True)
+
+    def _refresh_rate_display(self):
+        if not self._current_info or self._current_info.get("is_max"):
+            return
+        base_rate = self._current_info.get("success_rate", 0.0)
+        use_lucky = self.lucky_checkbox.isChecked()
+        final_rate = min(base_rate + 0.15 if use_lucky else base_rate, 1.0)
+        if use_lucky:
+            self.rate_label.setText(f"成功率：{base_rate * 100:.1f}% → {final_rate * 100:.1f}%（幸运符+15%）")
+        else:
+            self.rate_label.setText(f"成功率：{final_rate * 100:.1f}%")
 
     def _on_slot_clicked(self, slot_key):
         for key, slot in self.slots.items():
@@ -394,6 +496,8 @@ class UpgradePage(QWidget):
             self.upgrade_button.setEnabled(False)
             return
 
+        self._current_info = info
+
         slot = self.slots.get(self.selected_slot)
         if not slot:
             return
@@ -418,6 +522,8 @@ class UpgradePage(QWidget):
             self.cost_label.setText("消耗金币：-")
             self.stone_cost_label.setText("消耗强化石：-")
             self.rate_label.setText("成功率：-")
+            self.protect_checkbox.setEnabled(False)
+            self.lucky_checkbox.setEnabled(False)
             self.upgrade_button.setEnabled(False)
             self.upgrade_button.setText("已满级")
             return
@@ -444,7 +550,8 @@ class UpgradePage(QWidget):
         )
         self.cost_label.setText(f"消耗金币：{info['cost']}")
         self.stone_cost_label.setText(f"消耗强化石：{info['stone_cost']} 颗")
-        self.rate_label.setText(f"成功率：{info['success_rate'] * 100:.1f}%")
+        self._update_item_labels()
+        self._refresh_rate_display()
         if not self._upgrade_pending:
             self.upgrade_button.setEnabled(True)
         self.upgrade_button.setText("开始强化")
@@ -457,13 +564,21 @@ class UpgradePage(QWidget):
         if slot.is_empty or not slot.equipment_id:
             return
 
+        use_protect = self.protect_checkbox.isChecked()
+        use_lucky = self.lucky_checkbox.isChecked()
+
         self._upgrade_pending = True
         self.result_label.setText("强化中...")
         self.result_label.setStyleSheet("color: #aaa;")
         self.upgrade_button.setEnabled(False)
         self.upgrade_button.setText("强化中...")
+        self.protect_checkbox.setEnabled(False)
+        self.lucky_checkbox.setEnabled(False)
 
-        self.api.upgrade_equipment(slot.equipment_id, self._on_upgrade_result)
+        self.api.upgrade_equipment(
+            slot.equipment_id, self._on_upgrade_result,
+            use_protect_scroll=use_protect, use_lucky_charm=use_lucky
+        )
 
     def _on_upgrade_result(self, result):
         self._upgrade_pending = False
@@ -473,6 +588,7 @@ class UpgradePage(QWidget):
             self.result_label.setStyleSheet("color: #ff6666;")
             self.upgrade_button.setEnabled(True)
             self.upgrade_button.setText("开始强化")
+            self._update_item_labels()
             return
 
         if result.get("success"):
@@ -487,5 +603,13 @@ class UpgradePage(QWidget):
 
         if result.get("enhance_stones") is not None:
             self.stones_updated.emit(result["enhance_stones"])
+
+        if result.get("protect_scrolls") is not None:
+            self.player_scrolls = result["protect_scrolls"]
+            self.scrolls_updated.emit(result["protect_scrolls"])
+
+        if result.get("lucky_charms") is not None:
+            self.player_charms = result["lucky_charms"]
+            self.charms_updated.emit(result["lucky_charms"])
 
         self.refresh_data()

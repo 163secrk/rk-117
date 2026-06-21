@@ -2,7 +2,7 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QTabWidget, QStatusBar, QFrame, QPushButton, QDialog,
-    QSpinBox, QMessageBox
+    QSpinBox, QMessageBox, QCheckBox, QComboBox
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QIcon
@@ -11,12 +11,19 @@ from api_client import ApiClient
 from upgrade_page import UpgradePage
 
 
+SHOP_ITEMS = [
+    {"key": "stones", "name": "强化石", "icon": "💎", "price": 10, "unit": "颗"},
+    {"key": "protect", "name": "保护卷", "icon": "🛡", "price": 500, "unit": "张"},
+    {"key": "lucky", "name": "幸运符", "icon": "🍀", "price": 800, "unit": "张"},
+]
+
+
 class ShopDialog(QDialog):
-    def __init__(self, api_client, current_gold, current_stones, parent=None):
+    def __init__(self, api_client, current_gold, current_stones, current_scrolls, current_charms, parent=None):
         super().__init__(parent)
         self.api = api_client
         self.setWindowTitle("商店")
-        self.setFixedSize(400, 300)
+        self.setFixedSize(420, 380)
         self.setStyleSheet("""
             QDialog {
                 background-color: #14141e;
@@ -44,7 +51,7 @@ class ShopDialog(QDialog):
                 background-color: #444;
                 color: #888;
             }
-            QSpinBox {
+            QSpinBox, QComboBox {
                 background-color: #2a2a3e;
                 color: #ddd;
                 border: 1px solid #555;
@@ -55,8 +62,8 @@ class ShopDialog(QDialog):
         """)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(20)
+        layout.setContentsMargins(30, 25, 30, 25)
+        layout.setSpacing(15)
 
         title = QLabel("🏪 商店")
         title_font = QFont()
@@ -71,13 +78,34 @@ class ShopDialog(QDialog):
         self.gold_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.gold_label)
 
-        self.stones_label = QLabel(f"💎 当前强化石：{current_stones:,}")
+        resources_layout = QHBoxLayout()
+        resources_layout.setSpacing(15)
+        self.stones_label = QLabel(f"💎 强化石：{current_stones:,}")
         self.stones_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.stones_label)
+        self.scrolls_label = QLabel(f"🛡 保护卷：{current_scrolls:,}")
+        self.scrolls_label.setAlignment(Qt.AlignCenter)
+        self.charms_label = QLabel(f"🍀 幸运符：{current_charms:,}")
+        self.charms_label.setAlignment(Qt.AlignCenter)
+        resources_layout.addWidget(self.stones_label)
+        resources_layout.addWidget(self.scrolls_label)
+        resources_layout.addWidget(self.charms_label)
+        layout.addLayout(resources_layout)
 
-        price_label = QLabel("💎 强化石单价：10 金币/颗")
-        price_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(price_label)
+        item_layout = QHBoxLayout()
+        item_layout.setSpacing(10)
+        item_label = QLabel("选择商品：")
+        self.item_combo = QComboBox()
+        for item in SHOP_ITEMS:
+            self.item_combo.addItem(f"{item['icon']} {item['name']} ({item['price']}金币/{item['unit']})", item["key"])
+        self.item_combo.currentIndexChanged.connect(self._update_total)
+        item_layout.addWidget(item_label)
+        item_layout.addWidget(self.item_combo, 1)
+        layout.addLayout(item_layout)
+
+        self.desc_label = QLabel("")
+        self.desc_label.setAlignment(Qt.AlignCenter)
+        self.desc_label.setStyleSheet("color: #aaa; font-size: 12px;")
+        layout.addWidget(self.desc_label)
 
         amount_layout = QHBoxLayout()
         amount_layout.setSpacing(10)
@@ -93,7 +121,7 @@ class ShopDialog(QDialog):
 
         self.total_label = QLabel("总计：10 金币")
         self.total_label.setAlignment(Qt.AlignCenter)
-        self.total_label.setStyleSheet("color: #ffcc44; font-weight: bold;")
+        self.total_label.setStyleSheet("color: #ffcc44; font-weight: bold; font-size: 15px;")
         layout.addWidget(self.total_label)
 
         self.buy_button = QPushButton("购买")
@@ -102,16 +130,35 @@ class ShopDialog(QDialog):
 
         layout.addStretch()
 
+        self._update_total()
+
+    def _get_current_item(self):
+        key = self.item_combo.currentData()
+        return next((item for item in SHOP_ITEMS if item["key"] == key), SHOP_ITEMS[0])
+
     def _update_total(self):
+        item = self._get_current_item()
         amount = self.amount_spin.value()
-        total = amount * 10
+        total = amount * item["price"]
         self.total_label.setText(f"总计：{total:,} 金币")
+        if item["key"] == "protect":
+            self.desc_label.setText("保护卷：强化失败时不扣除强化石，每次消耗1张")
+        elif item["key"] == "lucky":
+            self.desc_label.setText("幸运符：强化成功率+15%，每次消耗1张")
+        else:
+            self.desc_label.setText("强化石：装备强化必需材料")
 
     def _on_buy_clicked(self):
+        item = self._get_current_item()
         amount = self.amount_spin.value()
         self.buy_button.setEnabled(False)
         self.buy_button.setText("购买中...")
-        self.api.buy_stones(amount, self._on_buy_result)
+        if item["key"] == "stones":
+            self.api.buy_stones(amount, self._on_buy_result)
+        elif item["key"] == "protect":
+            self.api.buy_protect_scrolls(amount, self._on_buy_result)
+        elif item["key"] == "lucky":
+            self.api.buy_lucky_charms(amount, self._on_buy_result)
 
     def _on_buy_result(self, result):
         if not result:
@@ -125,9 +172,18 @@ class ShopDialog(QDialog):
             if result.get("gold") is not None:
                 self.gold_label.setText(f"💰 当前金币：{result['gold']:,}")
             if result.get("enhance_stones") is not None:
-                self.stones_label.setText(f"💎 当前强化石：{result['enhance_stones']:,}")
-            if hasattr(self.parent(), '_on_player_loaded') and result.get("gold") is not None:
-                self.parent()._on_player_loaded({"gold": result["gold"], "enhance_stones": result.get("enhance_stones")})
+                self.stones_label.setText(f"💎 强化石：{result['enhance_stones']:,}")
+            if result.get("protect_scrolls") is not None:
+                self.scrolls_label.setText(f"🛡 保护卷：{result['protect_scrolls']:,}")
+            if result.get("lucky_charms") is not None:
+                self.charms_label.setText(f"🍀 幸运符：{result['lucky_charms']:,}")
+            if hasattr(self.parent(), '_on_player_loaded'):
+                self.parent()._on_player_loaded({
+                    "gold": result.get("gold"),
+                    "enhance_stones": result.get("enhance_stones"),
+                    "protect_scrolls": result.get("protect_scrolls"),
+                    "lucky_charms": result.get("lucky_charms"),
+                })
         else:
             QMessageBox.warning(self, "失败", result.get("message", "购买失败"))
 
@@ -144,6 +200,8 @@ class MainWindow(QMainWindow):
 
         self.api = ApiClient()
         self.current_stones = 0
+        self.current_scrolls = 0
+        self.current_charms = 0
 
         self._apply_global_style()
         self._init_ui()
@@ -224,6 +282,20 @@ class MainWindow(QMainWindow):
         self.stones_label.setFont(stones_font)
         self.stones_label.setStyleSheet("color: #88ddff;")
 
+        self.scrolls_label = QLabel("🛡 保护卷：0")
+        scrolls_font = QFont()
+        scrolls_font.setPointSize(13)
+        scrolls_font.setBold(True)
+        self.scrolls_label.setFont(scrolls_font)
+        self.scrolls_label.setStyleSheet("color: #ffaa88;")
+
+        self.charms_label = QLabel("🍀 幸运符：0")
+        charms_font = QFont()
+        charms_font.setPointSize(13)
+        charms_font.setBold(True)
+        self.charms_label.setFont(charms_font)
+        self.charms_label.setStyleSheet("color: #aaffaa;")
+
         self.shop_button = QPushButton("🏪 商店")
         shop_font = QFont()
         shop_font.setPointSize(12)
@@ -252,6 +324,10 @@ class MainWindow(QMainWindow):
         status_layout.addWidget(self.gold_label)
         status_layout.addSpacing(20)
         status_layout.addWidget(self.stones_label)
+        status_layout.addSpacing(20)
+        status_layout.addWidget(self.scrolls_label)
+        status_layout.addSpacing(20)
+        status_layout.addWidget(self.charms_label)
         status_layout.addSpacing(15)
         status_layout.addWidget(self.shop_button)
 
@@ -263,6 +339,8 @@ class MainWindow(QMainWindow):
         self.upgrade_page = UpgradePage(self.api)
         self.upgrade_page.gold_updated.connect(self._update_gold)
         self.upgrade_page.stones_updated.connect(self._update_stones)
+        self.upgrade_page.scrolls_updated.connect(self._update_scrolls)
+        self.upgrade_page.charms_updated.connect(self._update_charms)
         self.tab_widget.addTab(self.upgrade_page, "强化")
 
         main_layout.addWidget(self.tab_widget, 1)
@@ -277,6 +355,10 @@ class MainWindow(QMainWindow):
             self._update_gold(player["gold"])
         if player and player.get("enhance_stones") is not None:
             self._update_stones(player["enhance_stones"])
+        if player and player.get("protect_scrolls") is not None:
+            self._update_scrolls(player["protect_scrolls"])
+        if player and player.get("lucky_charms") is not None:
+            self._update_charms(player["lucky_charms"])
 
     def _update_gold(self, gold: int):
         self.gold_label.setText(f"💰 金币：{gold:,}")
@@ -284,6 +366,14 @@ class MainWindow(QMainWindow):
     def _update_stones(self, stones: int):
         self.current_stones = stones
         self.stones_label.setText(f"💎 强化石：{stones:,}")
+
+    def _update_scrolls(self, scrolls: int):
+        self.current_scrolls = scrolls
+        self.scrolls_label.setText(f"🛡 保护卷：{scrolls:,}")
+
+    def _update_charms(self, charms: int):
+        self.current_charms = charms
+        self.charms_label.setText(f"🍀 幸运符：{charms:,}")
 
     def _open_shop(self):
         current_gold = 0
@@ -294,7 +384,7 @@ class MainWindow(QMainWindow):
         except:
             pass
 
-        dialog = ShopDialog(self.api, current_gold, self.current_stones, self)
+        dialog = ShopDialog(self.api, current_gold, self.current_stones, self.current_scrolls, self.current_charms, self)
         dialog.exec()
 
 

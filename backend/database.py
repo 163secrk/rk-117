@@ -16,6 +16,13 @@ def get_db():
         conn.close()
 
 
+def _add_column_if_not_exists(cursor, table, column, definition):
+    cursor.execute(f"PRAGMA table_info({table})")
+    columns = [row["name"] for row in cursor.fetchall()]
+    if column not in columns:
+        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 def init_db():
     with get_db() as conn:
         cursor = conn.cursor()
@@ -26,9 +33,14 @@ def init_db():
                 name TEXT NOT NULL DEFAULT '新玩家',
                 gold INTEGER NOT NULL DEFAULT 5000,
                 enhance_stones INTEGER NOT NULL DEFAULT 30,
+                protect_scrolls INTEGER NOT NULL DEFAULT 0,
+                lucky_charms INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        _add_column_if_not_exists(cursor, "player", "protect_scrolls", "INTEGER NOT NULL DEFAULT 0")
+        _add_column_if_not_exists(cursor, "player", "lucky_charms", "INTEGER NOT NULL DEFAULT 0")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS equipment (
@@ -45,7 +57,10 @@ def init_db():
         cursor.execute("SELECT COUNT(*) as cnt FROM player")
         count = cursor.fetchone()["cnt"]
         if count == 0:
-            cursor.execute("INSERT INTO player (name, gold, enhance_stones) VALUES (?, ?, ?)", ("新玩家", 5000, 30))
+            cursor.execute(
+                "INSERT INTO player (name, gold, enhance_stones, protect_scrolls, lucky_charms) VALUES (?, ?, ?, ?, ?)",
+                ("新玩家", 5000, 30, 0, 0)
+            )
             player_id = cursor.lastrowid
             default_equips = [
                 (player_id, "weapon", "铁剑", 0, "铁剑"),

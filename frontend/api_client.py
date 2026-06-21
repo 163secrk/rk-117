@@ -80,9 +80,13 @@ class ApiClient(QObject):
         except Exception:
             return None
 
-    def upgrade_equipment_sync(self, equipment_id):
+    def upgrade_equipment_sync(self, equipment_id, use_protect_scroll=False, use_lucky_charm=False):
         try:
-            resp = requests.post(f"{self.base_url}/api/upgrade/{equipment_id}", timeout=5)
+            resp = requests.post(
+                f"{self.base_url}/api/upgrade/{equipment_id}",
+                json={"use_protect_scroll": use_protect_scroll, "use_lucky_charm": use_lucky_charm},
+                timeout=5
+            )
             resp.raise_for_status()
             return resp.json()
         except Exception:
@@ -91,6 +95,22 @@ class ApiClient(QObject):
     def buy_stones_sync(self, amount):
         try:
             resp = requests.post(f"{self.base_url}/api/shop/buy_stones/{amount}", timeout=5)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            return None
+
+    def buy_protect_scrolls_sync(self, amount):
+        try:
+            resp = requests.post(f"{self.base_url}/api/shop/buy_protect_scrolls/{amount}", timeout=5)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            return None
+
+    def buy_lucky_charms_sync(self, amount):
+        try:
+            resp = requests.post(f"{self.base_url}/api/shop/buy_lucky_charms/{amount}", timeout=5)
             resp.raise_for_status()
             return resp.json()
         except Exception:
@@ -105,8 +125,17 @@ class ApiClient(QObject):
     def get_upgrade_info(self, equipment_id, callback, error_callback=None):
         self._run_async(self.get_upgrade_info_sync, callback, error_callback, equipment_id)
 
-    def upgrade_equipment(self, equipment_id, callback, error_callback=None):
-        self._run_async(self.upgrade_equipment_sync, callback, error_callback, equipment_id)
+    def upgrade_equipment(self, equipment_id, callback, error_callback=None, use_protect_scroll=False, use_lucky_charm=False):
+        self._run_async(
+            self.upgrade_equipment_sync, callback, error_callback,
+            equipment_id, use_protect_scroll, use_lucky_charm
+        )
 
     def buy_stones(self, amount, callback, error_callback=None):
         self._run_async(self.buy_stones_sync, callback, error_callback, amount)
+
+    def buy_protect_scrolls(self, amount, callback, error_callback=None):
+        self._run_async(self.buy_protect_scrolls_sync, callback, error_callback, amount)
+
+    def buy_lucky_charms(self, amount, callback, error_callback=None):
+        self._run_async(self.buy_lucky_charms_sync, callback, error_callback, amount)

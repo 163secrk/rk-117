@@ -27,6 +27,8 @@ class UpgradeResponse(BaseModel):
     new_level: int | None = None
     gold: int | None = None
     enhance_stones: int | None = None
+    protect_scrolls: int | None = None
+    lucky_charms: int | None = None
 
 
 class ShopResponse(BaseModel):
@@ -34,6 +36,13 @@ class ShopResponse(BaseModel):
     message: str
     gold: int | None = None
     enhance_stones: int | None = None
+    protect_scrolls: int | None = None
+    lucky_charms: int | None = None
+
+
+class UpgradeRequest(BaseModel):
+    use_protect_scroll: bool = False
+    use_lucky_charm: bool = False
 
 
 def get_default_player():
@@ -42,7 +51,10 @@ def get_default_player():
         cursor.execute("SELECT * FROM player ORDER BY id ASC LIMIT 1")
         player = cursor.fetchone()
         if not player:
-            cursor.execute("INSERT INTO player (name, gold, enhance_stones) VALUES (?, ?, ?)", ("新玩家", 5000, 30))
+            cursor.execute(
+                "INSERT INTO player (name, gold, enhance_stones, protect_scrolls, lucky_charms) VALUES (?, ?, ?, ?, ?)",
+                ("新玩家", 5000, 30, 0, 0)
+            )
             player_id = cursor.lastrowid
             default_equips = [
                 (player_id, "weapon", "铁剑", 0, "铁剑"),
@@ -73,7 +85,10 @@ def get_default_player():
                         "INSERT INTO equipment (player_id, slot, name, level, base_name) VALUES (?, ?, ?, ?, ?)",
                         (player_id, slot, name, 0, base_name)
                     )
-        return dict(player)
+        result = dict(player)
+        result.setdefault("protect_scrolls", 0)
+        result.setdefault("lucky_charms", 0)
+        return result
 
 
 @app.get("/api/player")
@@ -120,7 +135,7 @@ def get_equipment():
 
 
 @app.post("/api/upgrade/{equipment_id}")
-def upgrade_equipment(equipment_id: int):
+def upgrade_equipment(equipment_id: int, request: UpgradeRequest = UpgradeRequest()):
     player = get_default_player()
 
     with get_db() as conn:
@@ -145,33 +160,65 @@ def upgrade_equipment(equipment_id: int):
         if player["enhance_stones"] < stone_cost:
             return UpgradeResponse(success=False, message=f"强化石不足，需要 {stone_cost} 颗强化石")
 
+        use_protect = request.use_protect_scroll
+        use_lucky = request.use_lucky_charm
+
+        if use_protect and player.get("protect_scrolls", 0) < 1:
+            return UpgradeResponse(success=False, message="保护卷不足")
+
+        if use_lucky and player.get("lucky_charms", 0) < 1:
+            return UpgradeResponse(success=False, message="幸运符不足")
+
         cursor.execute("UPDATE player SET gold = gold - ?, enhance_stones = enhance_stones - ? WHERE id = ?", (cost, stone_cost, player["id"]))
 
-        rate = get_success_rate(current_level)
+        if use_protect:
+            cursor.execute("UPDATE player SET protect_scrolls = protect_scrolls - 1 WHERE id = ?", (player["id"],))
+
+        if use_lucky:
+            cursor.execute("UPDATE player SET lucky_charms = lucky_charms - 1 WHERE id = ?", (player["id"],))
+
+        base_rate = get_success_rate(current_level)
+        rate = min(base_rate + 0.15 if use_lucky else base_rate, 1.0)
         roll = random.random()
 
-        cursor.execute("SELECT gold, enhance_stones FROM player WHERE id = ?", (player["id"],))
+        cursor.execute("SELECT gold, enhance_stones, protect_scrolls, lucky_charms FROM player WHERE id = ?", (player["id"],))
         player_data = cursor.fetchone()
         new_gold = player_data["gold"]
         new_stones = player_data["enhance_stones"]
+        new_scrolls = player_data["protect_scrolls"]
+        new_charms = player_data["lucky_charms"]
 
         if roll < rate:
             new_level = current_level + 1
             cursor.execute("UPDATE equipment SET level = ? WHERE id = ?", (new_level, equipment_id))
+            msg = f"强化成功！+{current_level} → +{new_level}"
+            if use_lucky:
+                msg += "（幸运符生效）"
             return UpgradeResponse(
                 success=True,
-                message=f"强化成功！+{current_level} → +{new_level}",
+                message=msg,
                 new_level=new_level,
                 gold=new_gold,
-                enhance_stones=new_stones
+                enhance_stones=new_stones,
+                protect_scrolls=new_scrolls,
+                lucky_charms=new_charms
             )
         else:
+            if use_protect:
+                cursor.execute("UPDATE player SET enhance_stones = enhance_stones + ? WHERE id = ?", (stone_cost, player["id"]))
+                cursor.execute("SELECT enhance_stones FROM player WHERE id = ?", (player["id"],))
+                new_stones = cursor.fetchone()["enhance_stones"]
+                msg = f"强化失败！保护卷生效，已返还 {stone_cost} 颗强化石"
+            else:
+                msg = f"强化失败！+{current_level} 保持不变"
             return UpgradeResponse(
                 success=False,
-                message=f"强化失败！+{current_level} 保持不变",
+                message=msg,
                 new_level=current_level,
                 gold=new_gold,
-                enhance_stones=new_stones
+                enhance_stones=new_stones,
+                protect_scrolls=new_scrolls,
+                lucky_charms=new_charms
             )
 
 
@@ -224,14 +271,88 @@ def buy_stones(amount: int):
 
         cursor.execute("UPDATE player SET gold = gold - ?, enhance_stones = enhance_stones + ? WHERE id = ?", (total_cost, amount, player["id"]))
 
-        cursor.execute("SELECT gold, enhance_stones FROM player WHERE id = ?", (player["id"],))
+        cursor.execute("SELECT gold, enhance_stones, protect_scrolls, lucky_charms FROM player WHERE id = ?", (player["id"],))
         player_data = cursor.fetchone()
         new_gold = player_data["gold"]
         new_stones = player_data["enhance_stones"]
+        new_scrolls = player_data["protect_scrolls"]
+        new_charms = player_data["lucky_charms"]
 
         return ShopResponse(
             success=True,
             message=f"成功购买 {amount} 颗强化石",
             gold=new_gold,
-            enhance_stones=new_stones
+            enhance_stones=new_stones,
+            protect_scrolls=new_scrolls,
+            lucky_charms=new_charms
+        )
+
+
+@app.post("/api/shop/buy_protect_scrolls/{amount}")
+def buy_protect_scrolls(amount: int):
+    player = get_default_player()
+
+    if amount <= 0:
+        return ShopResponse(success=False, message="购买数量必须大于0")
+
+    price_per_scroll = 500
+    total_cost = amount * price_per_scroll
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        if player["gold"] < total_cost:
+            return ShopResponse(success=False, message=f"金币不足，需要 {total_cost} 金币")
+
+        cursor.execute("UPDATE player SET gold = gold - ?, protect_scrolls = protect_scrolls + ? WHERE id = ?", (total_cost, amount, player["id"]))
+
+        cursor.execute("SELECT gold, enhance_stones, protect_scrolls, lucky_charms FROM player WHERE id = ?", (player["id"],))
+        player_data = cursor.fetchone()
+        new_gold = player_data["gold"]
+        new_stones = player_data["enhance_stones"]
+        new_scrolls = player_data["protect_scrolls"]
+        new_charms = player_data["lucky_charms"]
+
+        return ShopResponse(
+            success=True,
+            message=f"成功购买 {amount} 张保护卷",
+            gold=new_gold,
+            enhance_stones=new_stones,
+            protect_scrolls=new_scrolls,
+            lucky_charms=new_charms
+        )
+
+
+@app.post("/api/shop/buy_lucky_charms/{amount}")
+def buy_lucky_charms(amount: int):
+    player = get_default_player()
+
+    if amount <= 0:
+        return ShopResponse(success=False, message="购买数量必须大于0")
+
+    price_per_charm = 800
+    total_cost = amount * price_per_charm
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        if player["gold"] < total_cost:
+            return ShopResponse(success=False, message=f"金币不足，需要 {total_cost} 金币")
+
+        cursor.execute("UPDATE player SET gold = gold - ?, lucky_charms = lucky_charms + ? WHERE id = ?", (total_cost, amount, player["id"]))
+
+        cursor.execute("SELECT gold, enhance_stones, protect_scrolls, lucky_charms FROM player WHERE id = ?", (player["id"],))
+        player_data = cursor.fetchone()
+        new_gold = player_data["gold"]
+        new_stones = player_data["enhance_stones"]
+        new_scrolls = player_data["protect_scrolls"]
+        new_charms = player_data["lucky_charms"]
+
+        return ShopResponse(
+            success=True,
+            message=f"成功购买 {amount} 张幸运符",
+            gold=new_gold,
+            enhance_stones=new_stones,
+            protect_scrolls=new_scrolls,
+            lucky_charms=new_charms
         )
