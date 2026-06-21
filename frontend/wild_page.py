@@ -92,18 +92,21 @@ class WildPage(QWidget):
         self.power_label.setFont(power_label_font)
         self.power_label.setStyleSheet("color: #ffcc44;")
 
-        self.refresh_power_btn = QPushButton("🔄")
-        self.refresh_power_btn.setFixedSize(36, 36)
+        self.refresh_power_btn = QPushButton("🔄 刷新")
+        self.refresh_power_btn.setFixedHeight(36)
         self.refresh_power_btn.setCursor(Qt.PointingHandCursor)
         self.refresh_power_btn.setStyleSheet("""
             QPushButton {
                 background-color: #3a3a5a;
+                color: #ddd;
                 border: none;
                 border-radius: 6px;
-                font-size: 16px;
+                font-size: 13px;
+                padding: 6px 14px;
             }
             QPushButton:hover {
                 background-color: #4a4a6a;
+                color: #fff;
             }
             QPushButton:pressed {
                 background-color: #2a2a4a;
@@ -472,10 +475,10 @@ class WildPage(QWidget):
 
         is_better = equip.get("is_better", False)
         if is_better:
-            self.drop_status_label.setText("✅ 已装备（比当前装备更好）")
+            self.drop_status_label.setText("✅ 已自动装备，并放入背包")
             self.drop_status_label.setStyleSheet("color: #66ff66; font-size: 11px;")
         else:
-            self.drop_status_label.setText("📦 已放入对应部位背包（不如当前装备）")
+            self.drop_status_label.setText("📦 已放入背包（等级低于当前装备）")
             self.drop_status_label.setStyleSheet("color: #ffaa66; font-size: 11px;")
 
         self.drop_frame.setVisible(True)

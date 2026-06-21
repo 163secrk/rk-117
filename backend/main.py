@@ -370,7 +370,8 @@ class MonsterInfo(BaseModel):
 
 
 class EquipmentDrop(BaseModel):
-    id: int
+    id: int | None = None
+    inventory_id: int | None = None
     slot: str
     name: str
     base_name: str
@@ -475,7 +476,21 @@ def _roll_equipment_drop(monster_power: int, player_id: int) -> dict | None:
         if current and current["level"] >= level:
             is_better = False
 
+        cursor.execute(
+            "INSERT INTO inventory (player_id, slot, name, level, base_name, is_equipped) VALUES (?, ?, ?, ?, ?, 0)",
+            (player_id, slot, base_name, level, base_name)
+        )
+        inventory_id = cursor.lastrowid
+
         if is_better:
+            cursor.execute(
+                "UPDATE inventory SET is_equipped = 0 WHERE player_id = ? AND slot = ? AND is_equipped = 1",
+                (player_id, slot)
+            )
+            cursor.execute(
+                "UPDATE inventory SET is_equipped = 1 WHERE id = ?",
+                (inventory_id,)
+            )
             if current:
                 cursor.execute(
                     "UPDATE equipment SET name = ?, level = ?, base_name = ? WHERE id = ?",
@@ -493,6 +508,7 @@ def _roll_equipment_drop(monster_power: int, player_id: int) -> dict | None:
 
     return {
         "id": equip_id,
+        "inventory_id": inventory_id,
         "slot": slot,
         "name": display_name,
         "base_name": base_name,
@@ -572,3 +588,136 @@ def hunt_monster():
             protect_scrolls=player["protect_scrolls"],
             lucky_charms=player["lucky_charms"],
         )
+
+
+class InventoryItem(BaseModel):
+    id: int
+    slot: str
+    name: str
+    base_name: str
+    level: int
+    is_equipped: bool
+    display_name: str
+    quality: str
+    quality_color: str
+    attribute: dict | None = None
+
+
+class InventoryResponse(BaseModel):
+    success: bool
+    message: str
+    items: list[InventoryItem] = []
+
+
+class EquipResponse(BaseModel):
+    success: bool
+    message: str
+    gold: int | None = None
+    enhance_stones: int | None = None
+    protect_scrolls: int | None = None
+    lucky_charms: int | None = None
+
+
+@app.get("/api/inventory")
+def get_inventory():
+    player = get_default_player()
+    player_id = player["id"]
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM inventory WHERE player_id = ? ORDER BY slot, level DESC, created_at DESC",
+            (player_id,)
+        )
+        rows = cursor.fetchall()
+
+    items = []
+    for row in rows:
+        level = row["level"]
+        base_name = row["base_name"]
+        display_name = f"+{level} {base_name}" if level > 0 else base_name
+        quality = get_equipment_quality(level)
+        quality_color = get_equipment_quality_color(level)
+        attr = get_slot_attribute(row["slot"], level)
+
+        items.append(InventoryItem(
+            id=row["id"],
+            slot=row["slot"],
+            name=row["name"],
+            base_name=base_name,
+            level=level,
+            is_equipped=bool(row["is_equipped"]),
+            display_name=display_name,
+            quality=quality,
+            quality_color=quality_color,
+            attribute=attr
+        ))
+
+    return InventoryResponse(
+        success=True,
+        message=f"共 {len(items)} 件装备",
+        items=items
+    )
+
+
+@app.post("/api/inventory/equip/{inventory_id}")
+def equip_item(inventory_id: int):
+    player = get_default_player()
+    player_id = player["id"]
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM inventory WHERE id = ? AND player_id = ?",
+            (inventory_id, player_id)
+        )
+        item = cursor.fetchone()
+        if not item:
+            return EquipResponse(success=False, message="装备不存在")
+
+        if item["is_equipped"]:
+            return EquipResponse(success=False, message="该装备已在装备栏中")
+
+        slot = item["slot"]
+        level = item["level"]
+        base_name = item["base_name"]
+        item_display_name = f"+{level} {base_name}" if level > 0 else base_name
+
+        cursor.execute(
+            "UPDATE inventory SET is_equipped = 0 WHERE player_id = ? AND slot = ? AND is_equipped = 1",
+            (player_id, slot)
+        )
+        cursor.execute(
+            "UPDATE inventory SET is_equipped = 1 WHERE id = ?",
+            (inventory_id,)
+        )
+        cursor.execute(
+            "SELECT id FROM equipment WHERE player_id = ? AND slot = ?",
+            (player_id, slot)
+        )
+        equip_row = cursor.fetchone()
+        if equip_row:
+            cursor.execute(
+                "UPDATE equipment SET name = ?, level = ?, base_name = ? WHERE id = ?",
+                (base_name, level, base_name, equip_row["id"])
+            )
+        else:
+            cursor.execute(
+                "INSERT INTO equipment (player_id, slot, name, level, base_name) VALUES (?, ?, ?, ?, ?)",
+                (player_id, slot, base_name, level, base_name)
+            )
+
+        cursor.execute(
+            "SELECT gold, enhance_stones, protect_scrolls, lucky_charms FROM player WHERE id = ?",
+            (player_id,)
+        )
+        player_data = cursor.fetchone()
+
+    return EquipResponse(
+        success=True,
+        message=f"已装备 {item_display_name}",
+        gold=player_data["gold"],
+        enhance_stones=player_data["enhance_stones"],
+        protect_scrolls=player_data["protect_scrolls"],
+        lucky_charms=player_data["lucky_charms"],
+    )

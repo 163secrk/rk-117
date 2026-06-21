@@ -54,6 +54,20 @@ def init_db():
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS inventory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                player_id INTEGER NOT NULL,
+                slot TEXT NOT NULL,
+                name TEXT NOT NULL,
+                level INTEGER NOT NULL DEFAULT 0,
+                base_name TEXT NOT NULL,
+                is_equipped INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (player_id) REFERENCES player (id)
+            )
+        """)
+
         cursor.execute("SELECT COUNT(*) as cnt FROM player")
         count = cursor.fetchone()["cnt"]
         if count == 0:
@@ -72,6 +86,27 @@ def init_db():
                 "INSERT INTO equipment (player_id, slot, name, level, base_name) VALUES (?, ?, ?, ?, ?)",
                 default_equips
             )
+            cursor.executemany(
+                "INSERT INTO inventory (player_id, slot, name, level, base_name, is_equipped) VALUES (?, ?, ?, ?, ?, 1)",
+                default_equips
+            )
+
+        cursor.execute("SELECT id FROM player")
+        all_players = cursor.fetchall()
+        for p in all_players:
+            pid = p["id"]
+            cursor.execute("SELECT * FROM equipment WHERE player_id = ?", (pid,))
+            equips = cursor.fetchall()
+            for e in equips:
+                cursor.execute(
+                    "SELECT COUNT(*) as cnt FROM inventory WHERE player_id = ? AND slot = ? AND level = ? AND base_name = ?",
+                    (pid, e["slot"], e["level"], e["base_name"])
+                )
+                if cursor.fetchone()["cnt"] == 0:
+                    cursor.execute(
+                        "INSERT INTO inventory (player_id, slot, name, level, base_name, is_equipped) VALUES (?, ?, ?, ?, ?, 1)",
+                        (pid, e["slot"], e["name"], e["level"], e["base_name"])
+                    )
 
 
 SLOT_ATTRIBUTE_INFO = {
