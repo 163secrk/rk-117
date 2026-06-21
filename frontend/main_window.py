@@ -109,7 +109,9 @@ class MainWindow(QMainWindow):
         self._refresh_gold()
 
     def _refresh_gold(self):
-        player = self.api.get_player()
+        self.api.get_player(self._on_player_loaded)
+
+    def _on_player_loaded(self, player):
         if player and player.get("gold") is not None:
             self._update_gold(player["gold"])
 

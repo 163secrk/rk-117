@@ -138,6 +138,7 @@ class UpgradePage(QWidget):
         self.selected_slot = None
         self.slots = {}
         self.equipment_list = []
+        self._upgrade_pending = False
 
         self._init_ui()
         self.refresh_data()
@@ -203,7 +204,7 @@ class UpgradePage(QWidget):
         upgrade_title.setStyleSheet("color: #eee;")
         right_layout.addWidget(upgrade_title)
 
-        self.current_equip_label = QLabel("请选择左侧装备")
+        self.current_equip_label = QLabel("加载中...")
         self.current_equip_label.setAlignment(Qt.AlignCenter)
         equip_font = QFont()
         equip_font.setPointSize(14)
@@ -280,9 +281,10 @@ class UpgradePage(QWidget):
         main_layout.addWidget(right_panel, 1)
 
     def refresh_data(self):
-        equipment = self.api.get_equipment()
-        player = self.api.get_player()
+        self.api.get_equipment(self._on_equipment_loaded)
+        self.api.get_player(self._on_player_loaded)
 
+    def _on_equipment_loaded(self, equipment):
         if equipment:
             self.equipment_list = equipment
             for equip in equipment:
@@ -290,15 +292,16 @@ class UpgradePage(QWidget):
                 if slot_key in self.slots:
                     self.slots[slot_key].update_data(equip)
 
-        if player and player.get("gold") is not None:
-            self.gold_updated.emit(player["gold"])
-
         if self.selected_slot and self.selected_slot in self.slots:
             self._update_upgrade_panel()
         else:
             weapon_slot = self.slots.get("weapon")
             if weapon_slot and not weapon_slot.is_empty:
                 self._on_slot_clicked("weapon")
+
+    def _on_player_loaded(self, player):
+        if player and player.get("gold") is not None:
+            self.gold_updated.emit(player["gold"])
 
     def _on_slot_clicked(self, slot_key):
         for key, slot in self.slots.items():
@@ -321,8 +324,20 @@ class UpgradePage(QWidget):
             self.upgrade_button.setEnabled(False)
             return
 
-        info = self.api.get_upgrade_info(slot.equipment_id)
+        self.level_info_label.setText("加载中...")
+        self.cost_label.setText("消耗金币：-")
+        self.rate_label.setText("成功率：-")
+        self.upgrade_button.setEnabled(False)
+
+        self.api.get_upgrade_info(slot.equipment_id, self._on_upgrade_info_loaded)
+
+    def _on_upgrade_info_loaded(self, info):
         if not info:
+            self.upgrade_button.setEnabled(False)
+            return
+
+        slot = self.slots.get(self.selected_slot)
+        if not slot:
             return
 
         if info.get("is_max"):
@@ -342,26 +357,34 @@ class UpgradePage(QWidget):
         )
         self.cost_label.setText(f"消耗金币：{info['cost']}")
         self.rate_label.setText(f"成功率：{info['success_rate'] * 100:.1f}%")
-        self.upgrade_button.setEnabled(True)
+        if not self._upgrade_pending:
+            self.upgrade_button.setEnabled(True)
         self.upgrade_button.setText("开始强化")
 
     def _on_upgrade_clicked(self):
-        if not self.selected_slot:
+        if not self.selected_slot or self._upgrade_pending:
             return
 
         slot = self.slots[self.selected_slot]
         if slot.is_empty or not slot.equipment_id:
             return
 
+        self._upgrade_pending = True
         self.result_label.setText("强化中...")
         self.result_label.setStyleSheet("color: #aaa;")
         self.upgrade_button.setEnabled(False)
+        self.upgrade_button.setText("强化中...")
 
-        result = self.api.upgrade_equipment(slot.equipment_id)
+        self.api.upgrade_equipment(slot.equipment_id, self._on_upgrade_result)
+
+    def _on_upgrade_result(self, result):
+        self._upgrade_pending = False
+
         if not result:
             self.result_label.setText("错误：无法连接服务器")
             self.result_label.setStyleSheet("color: #ff6666;")
             self.upgrade_button.setEnabled(True)
+            self.upgrade_button.setText("开始强化")
             return
 
         if result.get("success"):
