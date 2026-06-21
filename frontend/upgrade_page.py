@@ -425,7 +425,9 @@ class UpgradePage(QWidget):
             self.protect_checkbox.setEnabled(False)
         else:
             self.protect_checkbox.setEnabled(True)
-        if self.player_charms <= 0:
+        base_rate = self._current_info.get("success_rate", 0.0) if self._current_info and not self._current_info.get("is_max") else 0.0
+        lucky_useless = base_rate >= 1.0
+        if self.player_charms <= 0 or lucky_useless:
             self.lucky_checkbox.setChecked(False)
             self.lucky_checkbox.setEnabled(False)
         else:

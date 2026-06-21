@@ -386,6 +386,7 @@ class MainWindow(QMainWindow):
 
         dialog = ShopDialog(self.api, current_gold, self.current_stones, self.current_scrolls, self.current_charms, self)
         dialog.exec()
+        self.upgrade_page.refresh_data()
 
 
 def main():
