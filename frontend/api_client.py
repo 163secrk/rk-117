@@ -88,6 +88,14 @@ class ApiClient(QObject):
         except Exception:
             return None
 
+    def buy_stones_sync(self, amount):
+        try:
+            resp = requests.post(f"{self.base_url}/api/shop/buy_stones/{amount}", timeout=5)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            return None
+
     def get_player(self, callback, error_callback=None):
         self._run_async(self.get_player_sync, callback, error_callback)
 
@@ -99,3 +107,6 @@ class ApiClient(QObject):
 
     def upgrade_equipment(self, equipment_id, callback, error_callback=None):
         self._run_async(self.upgrade_equipment_sync, callback, error_callback, equipment_id)
+
+    def buy_stones(self, amount, callback, error_callback=None):
+        self._run_async(self.buy_stones_sync, callback, error_callback, amount)

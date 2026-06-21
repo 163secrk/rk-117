@@ -25,6 +25,7 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL DEFAULT '新玩家',
                 gold INTEGER NOT NULL DEFAULT 5000,
+                enhance_stones INTEGER NOT NULL DEFAULT 30,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -44,7 +45,7 @@ def init_db():
         cursor.execute("SELECT COUNT(*) as cnt FROM player")
         count = cursor.fetchone()["cnt"]
         if count == 0:
-            cursor.execute("INSERT INTO player (name, gold) VALUES (?, ?)", ("新玩家", 5000))
+            cursor.execute("INSERT INTO player (name, gold, enhance_stones) VALUES (?, ?, ?)", ("新玩家", 5000, 30))
             player_id = cursor.lastrowid
             cursor.execute(
                 "INSERT INTO equipment (player_id, slot, name, level, base_name) VALUES (?, ?, ?, ?, ?)",
@@ -55,6 +56,12 @@ def init_db():
 def get_upgrade_cost(level: int) -> int:
     base_cost = 100
     return int(base_cost * (1.5 ** level))
+
+
+def get_enhance_stone_cost(level: int) -> int:
+    if level < 5:
+        return 1
+    return level - 3
 
 
 def get_success_rate(level: int) -> float:

@@ -131,6 +131,7 @@ class EquipmentSlot(QFrame):
 
 class UpgradePage(QWidget):
     gold_updated = Signal(int)
+    stones_updated = Signal(int)
 
     def __init__(self, api_client: ApiClient, parent=None):
         super().__init__(parent)
@@ -230,11 +231,15 @@ class UpgradePage(QWidget):
         self.cost_label = QLabel("消耗金币：-")
         self.cost_label.setStyleSheet("color: #ffcc44; font-size: 13px;")
 
+        self.stone_cost_label = QLabel("消耗强化石：-")
+        self.stone_cost_label.setStyleSheet("color: #88ddff; font-size: 13px;")
+
         self.rate_label = QLabel("成功率：-")
         self.rate_label.setStyleSheet("color: #88ff88; font-size: 13px;")
 
         info_layout.addWidget(self.level_info_label)
         info_layout.addWidget(self.cost_label)
+        info_layout.addWidget(self.stone_cost_label)
         info_layout.addWidget(self.rate_label)
 
         right_layout.addWidget(info_frame)
@@ -302,6 +307,8 @@ class UpgradePage(QWidget):
     def _on_player_loaded(self, player):
         if player and player.get("gold") is not None:
             self.gold_updated.emit(player["gold"])
+        if player and player.get("enhance_stones") is not None:
+            self.stones_updated.emit(player["enhance_stones"])
 
     def _on_slot_clicked(self, slot_key):
         for key, slot in self.slots.items():
@@ -320,12 +327,14 @@ class UpgradePage(QWidget):
             self.current_equip_label.setStyleSheet("color: #888; padding: 10px;")
             self.level_info_label.setText("等级：-")
             self.cost_label.setText("消耗金币：-")
+            self.stone_cost_label.setText("消耗强化石：-")
             self.rate_label.setText("成功率：-")
             self.upgrade_button.setEnabled(False)
             return
 
         self.level_info_label.setText("加载中...")
         self.cost_label.setText("消耗金币：-")
+        self.stone_cost_label.setText("消耗强化石：-")
         self.rate_label.setText("成功率：-")
         self.upgrade_button.setEnabled(False)
 
@@ -345,6 +354,7 @@ class UpgradePage(QWidget):
             self.current_equip_label.setStyleSheet("color: #ff88ff; padding: 10px;")
             self.level_info_label.setText(f"已达最高等级 +{info['max_level']}")
             self.cost_label.setText("消耗金币：-")
+            self.stone_cost_label.setText("消耗强化石：-")
             self.rate_label.setText("成功率：-")
             self.upgrade_button.setEnabled(False)
             self.upgrade_button.setText("已满级")
@@ -356,6 +366,7 @@ class UpgradePage(QWidget):
             f"当前等级：+{info['current_level']}   →   目标：+{info['next_level']}"
         )
         self.cost_label.setText(f"消耗金币：{info['cost']}")
+        self.stone_cost_label.setText(f"消耗强化石：{info['stone_cost']} 颗")
         self.rate_label.setText(f"成功率：{info['success_rate'] * 100:.1f}%")
         if not self._upgrade_pending:
             self.upgrade_button.setEnabled(True)
@@ -396,5 +407,8 @@ class UpgradePage(QWidget):
 
         if result.get("gold") is not None:
             self.gold_updated.emit(result["gold"])
+
+        if result.get("enhance_stones") is not None:
+            self.stones_updated.emit(result["enhance_stones"])
 
         self.refresh_data()
