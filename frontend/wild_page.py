@@ -447,6 +447,7 @@ class WildPage(QWidget):
         level = equip.get("level", 0)
         quality = equip.get("quality", "普通")
         quality_color = equip.get("quality_color", "white")
+        is_better = equip.get("is_better", False)
         color = QUALITY_COLORS.get(quality_color, "#dddddd")
 
         self.drop_title_label.setText(f"✨ {quality}装备掉落！")
@@ -466,19 +467,29 @@ class WildPage(QWidget):
             attr_name = attr.get("name", "")
             attr_value = attr.get("value", 0)
             attr_icon = attr.get("icon", "")
+            multiplier = attr.get("multiplier", 1.0)
             if attr.get("is_percent"):
-                self.drop_attr_label.setText(f"{attr_icon} {attr_name} +{attr_value}%")
+                attr_text = f"{attr_icon} {attr_name} +{attr_value}%"
             else:
-                self.drop_attr_label.setText(f"{attr_icon} {attr_name} +{attr_value}")
+                attr_text = f"{attr_icon} {attr_name} +{attr_value}"
+            if multiplier != 1.0:
+                attr_text += f" (x{multiplier})"
+            self.drop_attr_label.setText(attr_text)
         else:
             self.drop_attr_label.setText("")
 
-        is_better = equip.get("is_better", False)
-        if is_better:
+        has_affix = equip.get("has_affix", False)
+        affix = equip.get("affix")
+        if has_affix and affix:
+            affix_name = affix.get("name", "")
+            affix_value = affix.get("value", 0)
+            self.drop_status_label.setText(f"✨ 特殊词条：{affix_name} +{int(affix_value * 100)}%")
+            self.drop_status_label.setStyleSheet("color: #ffaa33; font-size: 11px; font-weight: bold;")
+        elif is_better:
             self.drop_status_label.setText("✅ 已自动装备，并放入背包")
             self.drop_status_label.setStyleSheet("color: #66ff66; font-size: 11px;")
         else:
-            self.drop_status_label.setText("📦 已放入背包（等级低于当前装备）")
+            self.drop_status_label.setText("📦 已放入背包")
             self.drop_status_label.setStyleSheet("color: #ffaa66; font-size: 11px;")
 
         self.drop_frame.setVisible(True)

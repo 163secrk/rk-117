@@ -50,9 +50,18 @@ def init_db():
                 name TEXT NOT NULL,
                 level INTEGER NOT NULL DEFAULT 0,
                 base_name TEXT NOT NULL,
+                quality TEXT NOT NULL DEFAULT 'white',
+                affix_key TEXT,
+                affix_value REAL,
+                affix_name TEXT,
                 FOREIGN KEY (player_id) REFERENCES player (id)
             )
         """)
+
+        _add_column_if_not_exists(cursor, "equipment", "quality", "TEXT NOT NULL DEFAULT 'white'")
+        _add_column_if_not_exists(cursor, "equipment", "affix_key", "TEXT")
+        _add_column_if_not_exists(cursor, "equipment", "affix_value", "REAL")
+        _add_column_if_not_exists(cursor, "equipment", "affix_name", "TEXT")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS inventory (
@@ -62,11 +71,20 @@ def init_db():
                 name TEXT NOT NULL,
                 level INTEGER NOT NULL DEFAULT 0,
                 base_name TEXT NOT NULL,
+                quality TEXT NOT NULL DEFAULT 'white',
+                affix_key TEXT,
+                affix_value REAL,
+                affix_name TEXT,
                 is_equipped INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (player_id) REFERENCES player (id)
             )
         """)
+
+        _add_column_if_not_exists(cursor, "inventory", "quality", "TEXT NOT NULL DEFAULT 'white'")
+        _add_column_if_not_exists(cursor, "inventory", "affix_key", "TEXT")
+        _add_column_if_not_exists(cursor, "inventory", "affix_value", "REAL")
+        _add_column_if_not_exists(cursor, "inventory", "affix_name", "TEXT")
 
         cursor.execute("SELECT COUNT(*) as cnt FROM player")
         count = cursor.fetchone()["cnt"]
@@ -169,40 +187,150 @@ def get_success_rate(level: int) -> float:
     return rates.get(level, 0.01)
 
 
-EQUIPMENT_TIERS = [
-    {"min_level": 0, "max_level": 3, "quality": "普通", "color": "white",
-     "names": {"weapon": "铁剑", "helmet": "布帽", "armor": "布衣", "necklace": "铜项链"}},
-    {"min_level": 4, "max_level": 7, "quality": "优秀", "color": "green",
-     "names": {"weapon": "钢剑", "helmet": "皮帽", "armor": "皮甲", "necklace": "银项链"}},
-    {"min_level": 8, "max_level": 11, "quality": "稀有", "color": "blue",
-     "names": {"weapon": "精钢剑", "helmet": "铁盔", "armor": "铁甲", "necklace": "金项链"}},
-    {"min_level": 12, "max_level": 15, "quality": "史诗", "color": "purple",
-     "names": {"weapon": "秘银剑", "helmet": "钢盔", "armor": "钢甲", "necklace": "宝石项链"}},
-    {"min_level": 16, "max_level": 20, "quality": "传说", "color": "orange",
-     "names": {"weapon": "龙牙剑", "helmet": "龙骨盔", "armor": "龙鳞甲", "necklace": "龙心项链"}},
+QUALITY_CONFIG = {
+    "white": {
+        "name": "普通",
+        "color": "white",
+        "multiplier": 1.0,
+        "weight": 50,
+        "affix_chance": 0.0,
+    },
+    "green": {
+        "name": "优秀",
+        "color": "green",
+        "multiplier": 1.5,
+        "weight": 30,
+        "affix_chance": 0.0,
+    },
+    "purple": {
+        "name": "稀有",
+        "color": "purple",
+        "multiplier": 2.0,
+        "weight": 15,
+        "affix_chance": 0.0,
+    },
+    "orange": {
+        "name": "传说",
+        "color": "orange",
+        "multiplier": 3.0,
+        "weight": 5,
+        "affix_chance": 0.0,
+    },
+}
+
+QUALITY_ORDER = ["white", "green", "purple", "orange"]
+
+
+AFFIX_POOL = [
+    {"key": "attack_pct", "name": "攻击", "value": 0.10, "is_percent": True, "slot": "weapon", "icon": "⚔"},
+    {"key": "crit_pct", "name": "暴击率", "value": 0.05, "is_percent": True, "slot": "weapon", "icon": "💥"},
+    {"key": "hp_pct", "name": "血量", "value": 0.10, "is_percent": True, "slot": "helmet", "icon": "❤"},
+    {"key": "defense_pct", "name": "防御", "value": 0.10, "is_percent": True, "slot": "armor", "icon": "🛡"},
+    {"key": "crit_dmg_pct", "name": "暴击伤害", "value": 0.15, "is_percent": True, "slot": "necklace", "icon": "💫"},
+    {"key": "attack_pct", "name": "攻击", "value": 0.08, "is_percent": True, "slot": "necklace", "icon": "⚔"},
 ]
 
 
-def get_equipment_tier(level: int):
-    for tier in reversed(EQUIPMENT_TIERS):
-        if level >= tier["min_level"]:
-            return tier
-    return EQUIPMENT_TIERS[0]
+def roll_random_quality() -> str:
+    import random
+    total_weight = sum(cfg["weight"] for cfg in QUALITY_CONFIG.values())
+    roll = random.randint(1, total_weight)
+    cum = 0
+    for q_key in QUALITY_ORDER:
+        cum += QUALITY_CONFIG[q_key]["weight"]
+        if roll <= cum:
+            return q_key
+    return "white"
+
+
+def get_quality_info(quality: str) -> dict:
+    return QUALITY_CONFIG.get(quality, QUALITY_CONFIG["white"])
+
+
+def get_quality_name(quality: str) -> str:
+    return get_quality_info(quality)["name"]
+
+
+def get_quality_color(quality: str) -> str:
+    return get_quality_info(quality)["color"]
+
+
+def get_quality_multiplier(quality: str) -> float:
+    return get_quality_info(quality)["multiplier"]
+
+
+def roll_random_affix(slot: str, quality: str) -> dict | None:
+    import random
+    if quality not in QUALITY_CONFIG:
+        return None
+    quality_idx = QUALITY_ORDER.index(quality)
+    if quality_idx < 1:
+        return None
+
+    pool = [a for a in AFFIX_POOL if a["slot"] == slot]
+    if not pool:
+        pool = AFFIX_POOL
+
+    affix = random.choice(pool)
+    value_multiplier = 1.0 + quality_idx * 0.3
+    return {
+        "key": affix["key"],
+        "name": affix["name"],
+        "value": round(affix["value"] * value_multiplier, 4),
+        "is_percent": affix["is_percent"],
+        "icon": affix["icon"],
+    }
+
+
+def get_slot_attribute(slot: str, level: int, quality: str = "white"):
+    info = SLOT_ATTRIBUTE_INFO.get(slot)
+    if not info:
+        return None
+    multiplier = get_quality_multiplier(quality)
+    base_value = info["per_level"] * level
+    value = int(base_value * multiplier) if not info.get("is_percent") else round(base_value * multiplier, 2)
+    return {
+        "key": info["attr_key"],
+        "name": info["attr_name"],
+        "icon": info["icon"],
+        "value": value,
+        "per_level": info["per_level"],
+        "is_percent": info.get("is_percent", False),
+        "multiplier": multiplier,
+    }
+
+
+EQUIPMENT_BASE_NAMES = {
+    "weapon": {
+        0: "铁剑", 5: "钢剑", 10: "精钢剑", 15: "秘银剑", 18: "龙牙剑"
+    },
+    "helmet": {
+        0: "布帽", 5: "皮帽", 10: "铁盔", 15: "钢盔", 18: "龙骨盔"
+    },
+    "armor": {
+        0: "布衣", 5: "皮甲", 10: "铁甲", 15: "钢甲", 18: "龙鳞甲"
+    },
+    "necklace": {
+        0: "铜项链", 5: "银项链", 10: "金项链", 15: "宝石项链", 18: "龙心项链"
+    },
+}
 
 
 def get_equipment_base_name(slot: str, level: int) -> str:
-    tier = get_equipment_tier(level)
-    return tier["names"].get(slot, "未知")
+    names = EQUIPMENT_BASE_NAMES.get(slot, {})
+    result = "未知"
+    for min_level, name in sorted(names.items()):
+        if level >= min_level:
+            result = name
+    return result
 
 
-def get_equipment_quality(level: int) -> str:
-    tier = get_equipment_tier(level)
-    return tier["quality"]
+def get_equipment_quality(level: int, quality: str = "white") -> str:
+    return get_quality_name(quality)
 
 
-def get_equipment_quality_color(level: int) -> str:
-    tier = get_equipment_tier(level)
-    return tier["color"]
+def get_equipment_quality_color(level: int, quality: str = "white") -> str:
+    return get_quality_color(quality)
 
 
 MONSTER_TIERS = [
@@ -223,26 +351,36 @@ def calculate_player_power(player_id: int) -> int:
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM equipment WHERE player_id = ?", (player_id,))
-        equips = cursor.fetchall()
+        rows = cursor.fetchall()
+        equips = [dict(row) for row in rows]
 
     total_power = 50
+
+    base_attrs = {"attack": 0, "hp": 0, "defense": 0, "crit": 0}
 
     for equip in equips:
         slot = equip["slot"]
         level = equip["level"] or 0
-        attr = get_slot_attribute(slot, level)
+        quality = equip.get("quality", "white")
+        attr = get_slot_attribute(slot, level, quality)
         if attr:
-            value = attr["value"]
-            if attr.get("is_percent"):
-                total_power += value * 20
-            else:
-                if attr["key"] == "attack":
-                    total_power += value * 3
-                elif attr["key"] == "hp":
-                    total_power += value // 5
-                elif attr["key"] == "defense":
-                    total_power += value * 4
-                else:
-                    total_power += value
+            base_attrs[attr["key"]] += attr["value"]
 
-    return total_power
+        affix_key = equip.get("affix_key")
+        affix_value = equip.get("affix_value")
+        if affix_key and affix_value and level >= 10:
+            if affix_key == "attack_pct":
+                base_attrs["attack"] = int(base_attrs["attack"] * (1 + affix_value))
+            elif affix_key == "hp_pct":
+                base_attrs["hp"] = int(base_attrs["hp"] * (1 + affix_value))
+            elif affix_key == "defense_pct":
+                base_attrs["defense"] = int(base_attrs["defense"] * (1 + affix_value))
+            elif affix_key == "crit_pct":
+                base_attrs["crit"] += affix_value * 100
+
+    total_power += base_attrs["attack"] * 3
+    total_power += base_attrs["hp"] // 5
+    total_power += base_attrs["defense"] * 4
+    total_power += base_attrs["crit"] * 20
+
+    return int(total_power)

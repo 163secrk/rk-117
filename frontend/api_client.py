@@ -181,5 +181,27 @@ class ApiClient(QObject):
     def get_inventory(self, callback, error_callback=None):
         self._run_async(self.get_inventory_sync, callback, error_callback)
 
+    def reforge_equipment_sync(self, equipment_id):
+        try:
+            resp = requests.post(f"{self.base_url}/api/shop/reforge_equipment/{equipment_id}", timeout=5)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            return None
+
+    def reforge_inventory_sync(self, inventory_id):
+        try:
+            resp = requests.post(f"{self.base_url}/api/shop/reforge_inventory/{inventory_id}", timeout=5)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            return None
+
     def equip_item(self, inventory_id, callback, error_callback=None):
         self._run_async(self.equip_item_sync, callback, error_callback, inventory_id)
+
+    def reforge_equipment(self, equipment_id, callback, error_callback=None):
+        self._run_async(self.reforge_equipment_sync, callback, error_callback, equipment_id)
+
+    def reforge_inventory(self, inventory_id, callback, error_callback=None):
+        self._run_async(self.reforge_inventory_sync, callback, error_callback, inventory_id)

@@ -6,7 +6,9 @@ from pydantic import BaseModel
 from database import (
     init_db, get_db, get_upgrade_cost, get_enhance_stone_cost, get_success_rate,
     get_slot_attribute, MONSTER_TIERS, calculate_player_power,
-    get_equipment_base_name, get_equipment_quality, get_equipment_quality_color
+    get_equipment_base_name, get_equipment_quality, get_equipment_quality_color,
+    roll_random_quality, get_quality_info, get_quality_name, get_quality_color,
+    get_quality_multiplier, roll_random_affix, QUALITY_CONFIG, QUALITY_ORDER
 )
 
 app = FastAPI(title="装备强化游戏API")
@@ -61,13 +63,13 @@ def get_default_player():
             )
             player_id = cursor.lastrowid
             default_equips = [
-                (player_id, "weapon", "铁剑", 0, "铁剑"),
-                (player_id, "helmet", "布帽", 0, "布帽"),
-                (player_id, "armor", "布衣", 0, "布衣"),
-                (player_id, "necklace", "铜项链", 0, "铜项链"),
+                (player_id, "weapon", "铁剑", 0, "铁剑", "white"),
+                (player_id, "helmet", "布帽", 0, "布帽", "white"),
+                (player_id, "armor", "布衣", 0, "布衣", "white"),
+                (player_id, "necklace", "铜项链", 0, "铜项链", "white"),
             ]
             cursor.executemany(
-                "INSERT INTO equipment (player_id, slot, name, level, base_name) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO equipment (player_id, slot, name, level, base_name, quality) VALUES (?, ?, ?, ?, ?, ?)",
                 default_equips
             )
             cursor.execute("SELECT * FROM player WHERE id = ?", (player_id,))
@@ -86,8 +88,8 @@ def get_default_player():
             for slot, (name, base_name) in all_slots.items():
                 if slot not in existing_slots:
                     cursor.execute(
-                        "INSERT INTO equipment (player_id, slot, name, level, base_name) VALUES (?, ?, ?, ?, ?)",
-                        (player_id, slot, name, 0, base_name)
+                        "INSERT INTO equipment (player_id, slot, name, level, base_name, quality) VALUES (?, ?, ?, ?, ?, ?)",
+                        (player_id, slot, name, 0, base_name, "white")
                     )
         result = dict(player)
         result.setdefault("protect_scrolls", 0)
@@ -115,12 +117,32 @@ def get_equipment():
             equip = next((e for e in equips if e["slot"] == slot), None)
             if equip:
                 level = equip["level"] or 0
+                quality = equip.get("quality", "white")
                 display_name = equip["base_name"] if level == 0 else f"+{level} {equip['base_name']}"
                 equip["display_name"] = display_name
-                attr = get_slot_attribute(slot, level)
-                next_attr = get_slot_attribute(slot, level + 1)
+                equip["quality"] = quality
+                equip["quality_name"] = get_quality_name(quality)
+                equip["quality_color"] = get_quality_color(quality)
+                equip["quality_multiplier"] = get_quality_multiplier(quality)
+                attr = get_slot_attribute(slot, level, quality)
+                next_attr = get_slot_attribute(slot, level + 1, quality)
                 equip["attribute"] = attr
                 equip["next_attribute"] = next_attr
+
+                affix_key = equip.get("affix_key")
+                affix_value = equip.get("affix_value")
+                affix_name = equip.get("affix_name")
+                has_affix = affix_key is not None and level >= 10
+                equip["has_affix"] = has_affix
+                equip["affix"] = None
+                if has_affix:
+                    equip["affix"] = {
+                        "key": affix_key,
+                        "name": affix_name or get_affix_display_name(affix_key),
+                        "value": affix_value,
+                        "is_percent": True,
+                    }
+
                 result.append(equip)
             else:
                 result.append({
@@ -130,12 +152,28 @@ def get_equipment():
                     "name": None,
                     "level": None,
                     "base_name": None,
+                    "quality": "white",
+                    "quality_name": "普通",
+                    "quality_color": "white",
                     "display_name": "（空）",
                     "empty": True,
                     "attribute": None,
-                    "next_attribute": None
+                    "next_attribute": None,
+                    "has_affix": False,
+                    "affix": None,
                 })
         return result
+
+
+def get_affix_display_name(key: str) -> str:
+    names = {
+        "attack_pct": "攻击",
+        "crit_pct": "暴击率",
+        "hp_pct": "血量",
+        "defense_pct": "防御",
+        "crit_dmg_pct": "暴击伤害",
+    }
+    return names.get(key, key)
 
 
 @app.post("/api/upgrade/{equipment_id}")
@@ -194,10 +232,31 @@ def upgrade_equipment(equipment_id: int, request: UpgradeRequest = UpgradeReques
 
         if roll < rate:
             new_level = current_level + 1
-            cursor.execute("UPDATE equipment SET level = ? WHERE id = ?", (new_level, equipment_id))
+            quality = equip.get("quality", "white")
+            slot = equip["slot"]
+
+            affix_unlocked = False
+            affix_name = None
+            if new_level >= 10 and not equip.get("affix_key"):
+                affix = roll_random_affix(slot, quality)
+                if affix:
+                    cursor.execute(
+                        "UPDATE equipment SET level = ?, affix_key = ?, affix_value = ?, affix_name = ? WHERE id = ?",
+                        (new_level, affix["key"], affix["value"], affix["name"], equipment_id)
+                    )
+                    affix_unlocked = True
+                    affix_name = affix["name"]
+                else:
+                    cursor.execute("UPDATE equipment SET level = ? WHERE id = ?", (new_level, equipment_id))
+            else:
+                cursor.execute("UPDATE equipment SET level = ? WHERE id = ?", (new_level, equipment_id))
+
             msg = f"强化成功！+{current_level} → +{new_level}"
             if use_lucky:
                 msg += "（幸运符生效）"
+            if affix_unlocked:
+                msg += f" 解锁特殊词条：{affix_name}"
+
             return UpgradeResponse(
                 success=True,
                 message=msg,
@@ -205,7 +264,7 @@ def upgrade_equipment(equipment_id: int, request: UpgradeRequest = UpgradeReques
                 gold=new_gold,
                 enhance_stones=new_stones,
                 protect_scrolls=new_scrolls,
-                lucky_charms=new_charms
+                lucky_charms=new_charms,
             )
         else:
             if use_protect:
@@ -459,11 +518,23 @@ def _roll_equipment_drop(monster_power: int, player_id: int) -> dict | None:
 
     level = min(20, max(0, level))
 
+    quality = roll_random_quality()
+    quality_name = get_quality_name(quality)
+    quality_color = get_quality_color(quality)
+
     base_name = get_equipment_base_name(slot, level)
-    quality = get_equipment_quality(level)
-    quality_color = get_equipment_quality_color(level)
     display_name = f"+{level} {base_name}" if level > 0 else base_name
-    attr = get_slot_attribute(slot, level)
+    attr = get_slot_attribute(slot, level, quality)
+
+    affix_key = None
+    affix_value = None
+    affix_name = None
+    if level >= 10:
+        affix = roll_random_affix(slot, quality)
+        if affix:
+            affix_key = affix["key"]
+            affix_value = affix["value"]
+            affix_name = affix["name"]
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -471,14 +542,26 @@ def _roll_equipment_drop(monster_power: int, player_id: int) -> dict | None:
             "SELECT * FROM equipment WHERE player_id = ? AND slot = ?",
             (player_id, slot)
         )
-        current = cursor.fetchone()
-        is_better = True
-        if current and current["level"] >= level:
-            is_better = False
+        current_row = cursor.fetchone()
+        current = dict(current_row) if current_row else None
+
+        current_power = 0
+        if current:
+            cur_quality = current.get("quality", "white")
+            cur_attr = get_slot_attribute(slot, current["level"], cur_quality)
+            if cur_attr:
+                current_power = cur_attr["value"] * (3 if cur_attr["key"] == "attack" else 1)
+
+        new_power = 0
+        new_attr = get_slot_attribute(slot, level, quality)
+        if new_attr:
+            new_power = new_attr["value"] * (3 if new_attr["key"] == "attack" else 1)
+
+        is_better = new_power > current_power
 
         cursor.execute(
-            "INSERT INTO inventory (player_id, slot, name, level, base_name, is_equipped) VALUES (?, ?, ?, ?, ?, 0)",
-            (player_id, slot, base_name, level, base_name)
+            "INSERT INTO inventory (player_id, slot, name, level, base_name, quality, affix_key, affix_value, affix_name, is_equipped) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            (player_id, slot, base_name, level, base_name, quality, affix_key, affix_value, affix_name)
         )
         inventory_id = cursor.lastrowid
 
@@ -493,32 +576,41 @@ def _roll_equipment_drop(monster_power: int, player_id: int) -> dict | None:
             )
             if current:
                 cursor.execute(
-                    "UPDATE equipment SET name = ?, level = ?, base_name = ? WHERE id = ?",
-                    (base_name, level, base_name, current["id"])
+                    "UPDATE equipment SET name = ?, level = ?, base_name = ?, quality = ?, affix_key = ?, affix_value = ?, affix_name = ? WHERE id = ?",
+                    (base_name, level, base_name, quality, affix_key, affix_value, affix_name, current["id"])
                 )
                 equip_id = current["id"]
             else:
                 cursor.execute(
-                    "INSERT INTO equipment (player_id, slot, name, level, base_name) VALUES (?, ?, ?, ?, ?)",
-                    (player_id, slot, base_name, level, base_name)
+                    "INSERT INTO equipment (player_id, slot, name, level, base_name, quality, affix_key, affix_value, affix_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (player_id, slot, base_name, level, base_name, quality, affix_key, affix_value, affix_name)
                 )
                 equip_id = cursor.lastrowid
         else:
             equip_id = current["id"] if current else None
 
-    return {
+    result = {
         "id": equip_id,
         "inventory_id": inventory_id,
         "slot": slot,
         "name": display_name,
         "base_name": base_name,
         "level": level,
-        "quality": quality,
+        "quality": quality_name,
         "quality_color": quality_color,
         "display_name": display_name,
         "is_better": is_better,
-        "attribute": attr
+        "attribute": attr,
+        "has_affix": affix_key is not None and level >= 10,
     }
+    if affix_key and level >= 10:
+        result["affix"] = {
+            "key": affix_key,
+            "name": affix_name,
+            "value": affix_value,
+            "is_percent": True,
+        }
+    return result
 
 
 @app.get("/api/wild/player_power")
@@ -629,29 +721,48 @@ def get_inventory():
             "SELECT * FROM inventory WHERE player_id = ? ORDER BY slot, level DESC, created_at DESC",
             (player_id,)
         )
-        rows = cursor.fetchall()
+        db_rows = cursor.fetchall()
+        rows = [dict(r) for r in db_rows]
 
     items = []
     for row in rows:
         level = row["level"]
         base_name = row["base_name"]
+        quality = row.get("quality", "white")
         display_name = f"+{level} {base_name}" if level > 0 else base_name
-        quality = get_equipment_quality(level)
-        quality_color = get_equipment_quality_color(level)
-        attr = get_slot_attribute(row["slot"], level)
+        quality_name = get_quality_name(quality)
+        quality_color = get_quality_color(quality)
+        attr = get_slot_attribute(row["slot"], level, quality)
 
-        items.append(InventoryItem(
-            id=row["id"],
-            slot=row["slot"],
-            name=row["name"],
-            base_name=base_name,
-            level=level,
-            is_equipped=bool(row["is_equipped"]),
-            display_name=display_name,
-            quality=quality,
-            quality_color=quality_color,
-            attribute=attr
-        ))
+        affix_key = row.get("affix_key")
+        affix_value = row.get("affix_value")
+        affix_name = row.get("affix_name")
+        has_affix = affix_key is not None and level >= 10
+        affix = None
+        if has_affix:
+            affix = {
+                "key": affix_key,
+                "name": affix_name or get_affix_display_name(affix_key),
+                "value": affix_value,
+                "is_percent": True,
+            }
+
+        item_dict = {
+            "id": row["id"],
+            "slot": row["slot"],
+            "name": row["name"],
+            "base_name": base_name,
+            "level": level,
+            "is_equipped": bool(row["is_equipped"]),
+            "display_name": display_name,
+            "quality": quality_name,
+            "quality_key": quality,
+            "quality_color": quality_color,
+            "attribute": attr,
+            "has_affix": has_affix,
+            "affix": affix,
+        }
+        items.append(item_dict)
 
     return InventoryResponse(
         success=True,
@@ -671,9 +782,10 @@ def equip_item(inventory_id: int):
             "SELECT * FROM inventory WHERE id = ? AND player_id = ?",
             (inventory_id, player_id)
         )
-        item = cursor.fetchone()
-        if not item:
+        item_row = cursor.fetchone()
+        if not item_row:
             return EquipResponse(success=False, message="装备不存在")
+        item = dict(item_row)
 
         if item["is_equipped"]:
             return EquipResponse(success=False, message="该装备已在装备栏中")
@@ -681,6 +793,10 @@ def equip_item(inventory_id: int):
         slot = item["slot"]
         level = item["level"]
         base_name = item["base_name"]
+        quality = item.get("quality", "white")
+        affix_key = item.get("affix_key")
+        affix_value = item.get("affix_value")
+        affix_name = item.get("affix_name")
         item_display_name = f"+{level} {base_name}" if level > 0 else base_name
 
         cursor.execute(
@@ -698,13 +814,13 @@ def equip_item(inventory_id: int):
         equip_row = cursor.fetchone()
         if equip_row:
             cursor.execute(
-                "UPDATE equipment SET name = ?, level = ?, base_name = ? WHERE id = ?",
-                (base_name, level, base_name, equip_row["id"])
+                "UPDATE equipment SET name = ?, level = ?, base_name = ?, quality = ?, affix_key = ?, affix_value = ?, affix_name = ? WHERE id = ?",
+                (base_name, level, base_name, quality, affix_key, affix_value, affix_name, equip_row["id"])
             )
         else:
             cursor.execute(
-                "INSERT INTO equipment (player_id, slot, name, level, base_name) VALUES (?, ?, ?, ?, ?)",
-                (player_id, slot, base_name, level, base_name)
+                "INSERT INTO equipment (player_id, slot, name, level, base_name, quality, affix_key, affix_value, affix_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (player_id, slot, base_name, level, base_name, quality, affix_key, affix_value, affix_name)
             )
 
         cursor.execute(
@@ -720,4 +836,206 @@ def equip_item(inventory_id: int):
         enhance_stones=player_data["enhance_stones"],
         protect_scrolls=player_data["protect_scrolls"],
         lucky_charms=player_data["lucky_charms"],
+    )
+
+
+class ReforgeResponse(BaseModel):
+    success: bool
+    message: str
+    gold: int | None = None
+    old_quality: str | None = None
+    new_quality: str | None = None
+    old_quality_name: str | None = None
+    new_quality_name: str | None = None
+    new_quality_color: str | None = None
+    equipment: dict | None = None
+
+
+REFORGE_COST = 500
+
+
+@app.post("/api/shop/reforge_equipment/{equipment_id}")
+def reforge_equipment(equipment_id: int):
+    player = get_default_player()
+    player_id = player["id"]
+
+    if player["gold"] < REFORGE_COST:
+        return ReforgeResponse(success=False, message=f"金币不足，需要 {REFORGE_COST} 金币")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM equipment WHERE id = ? AND player_id = ?",
+            (equipment_id, player_id)
+        )
+        equip = cursor.fetchone()
+        if not equip:
+            return ReforgeResponse(success=False, message="装备不存在")
+
+        old_quality = equip["quality"]
+        old_quality_name = get_quality_name(old_quality)
+
+        new_quality = roll_random_quality()
+
+        cursor.execute(
+            "UPDATE player SET gold = gold - ? WHERE id = ?",
+            (REFORGE_COST, player_id)
+        )
+
+        cursor.execute(
+            "UPDATE equipment SET quality = ?, affix_key = NULL, affix_value = NULL, affix_name = NULL WHERE id = ?",
+            (new_quality, equipment_id)
+        )
+
+        slot = equip["slot"]
+        level = equip["level"]
+        if level >= 10:
+            affix = roll_random_affix(slot, new_quality)
+            if affix:
+                cursor.execute(
+                    "UPDATE equipment SET affix_key = ?, affix_value = ?, affix_name = ? WHERE id = ?",
+                    (affix["key"], affix["value"], affix["name"], equipment_id)
+                )
+
+        cursor.execute(
+            "SELECT gold, enhance_stones, protect_scrolls, lucky_charms FROM player WHERE id = ?",
+            (player_id,)
+        )
+        player_data = cursor.fetchone()
+
+        cursor.execute(
+            "SELECT * FROM equipment WHERE id = ?",
+            (equipment_id,)
+        )
+        new_equip = dict(cursor.fetchone())
+        level = new_equip["level"]
+        quality = new_equip.get("quality", "white")
+        attr = get_slot_attribute(slot, level, quality)
+        next_attr = get_slot_attribute(slot, level + 1, quality)
+        new_equip["attribute"] = attr
+        new_equip["next_attribute"] = next_attr
+        new_equip["quality_name"] = get_quality_name(quality)
+        new_equip["quality_color"] = get_quality_color(quality)
+
+        affix_key = new_equip.get("affix_key")
+        has_affix = affix_key is not None and level >= 10
+        new_equip["has_affix"] = has_affix
+        new_equip["affix"] = None
+        if has_affix:
+            new_equip["affix"] = {
+                "key": affix_key,
+                "name": new_equip.get("affix_name") or get_affix_display_name(affix_key),
+                "value": new_equip.get("affix_value"),
+                "is_percent": True,
+            }
+
+    return ReforgeResponse(
+        success=True,
+        message=f"重铸成功！品质从【{old_quality_name}】变为【{get_quality_name(new_quality)}】",
+        gold=player_data["gold"],
+        old_quality=old_quality,
+        new_quality=new_quality,
+        old_quality_name=old_quality_name,
+        new_quality_name=get_quality_name(new_quality),
+        new_quality_color=get_quality_color(new_quality),
+        equipment=new_equip,
+    )
+
+
+@app.post("/api/shop/reforge_inventory/{inventory_id}")
+def reforge_inventory(inventory_id: int):
+    player = get_default_player()
+    player_id = player["id"]
+
+    if player["gold"] < REFORGE_COST:
+        return ReforgeResponse(success=False, message=f"金币不足，需要 {REFORGE_COST} 金币")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM inventory WHERE id = ? AND player_id = ?",
+            (inventory_id, player_id)
+        )
+        item = cursor.fetchone()
+        if not item:
+            return ReforgeResponse(success=False, message="装备不存在")
+
+        old_quality = item["quality"]
+        old_quality_name = get_quality_name(old_quality)
+
+        new_quality = roll_random_quality()
+
+        cursor.execute(
+            "UPDATE player SET gold = gold - ? WHERE id = ?",
+            (REFORGE_COST, player_id)
+        )
+
+        cursor.execute(
+            "UPDATE inventory SET quality = ?, affix_key = NULL, affix_value = NULL, affix_name = NULL WHERE id = ?",
+            (new_quality, inventory_id)
+        )
+
+        slot = item["slot"]
+        level = item["level"]
+        if level >= 10:
+            affix = roll_random_affix(slot, new_quality)
+            if affix:
+                cursor.execute(
+                    "UPDATE inventory SET affix_key = ?, affix_value = ?, affix_name = ? WHERE id = ?",
+                    (affix["key"], affix["value"], affix["name"], inventory_id)
+                )
+
+        if item["is_equipped"]:
+            cursor.execute(
+                "UPDATE equipment SET quality = ?, affix_key = NULL, affix_value = NULL, affix_name = NULL WHERE player_id = ? AND slot = ?",
+                (new_quality, player_id, slot)
+            )
+            if level >= 10:
+                affix = roll_random_affix(slot, new_quality)
+                if affix:
+                    cursor.execute(
+                        "UPDATE equipment SET affix_key = ?, affix_value = ?, affix_name = ? WHERE player_id = ? AND slot = ?",
+                        (affix["key"], affix["value"], affix["name"], player_id, slot)
+                    )
+
+        cursor.execute(
+            "SELECT gold, enhance_stones, protect_scrolls, lucky_charms FROM player WHERE id = ?",
+            (player_id,)
+        )
+        player_data = cursor.fetchone()
+
+        cursor.execute(
+            "SELECT * FROM inventory WHERE id = ?",
+            (inventory_id,)
+        )
+        new_item = dict(cursor.fetchone())
+        level = new_item["level"]
+        quality = new_item.get("quality", "white")
+        attr = get_slot_attribute(slot, level, quality)
+        new_item["attribute"] = attr
+        new_item["quality_name"] = get_quality_name(quality)
+        new_item["quality_color"] = get_quality_color(quality)
+
+        affix_key = new_item.get("affix_key")
+        has_affix = affix_key is not None and level >= 10
+        new_item["has_affix"] = has_affix
+        new_item["affix"] = None
+        if has_affix:
+            new_item["affix"] = {
+                "key": affix_key,
+                "name": new_item.get("affix_name") or get_affix_display_name(affix_key),
+                "value": new_item.get("affix_value"),
+                "is_percent": True,
+            }
+
+    return ReforgeResponse(
+        success=True,
+        message=f"重铸成功！品质从【{old_quality_name}】变为【{get_quality_name(new_quality)}】",
+        gold=player_data["gold"],
+        old_quality=old_quality,
+        new_quality=new_quality,
+        old_quality_name=old_quality_name,
+        new_quality_name=get_quality_name(new_quality),
+        new_quality_color=get_quality_color(new_quality),
+        equipment=new_item,
     )

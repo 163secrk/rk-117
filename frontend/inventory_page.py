@@ -32,6 +32,7 @@ QUALITY_COLORS = {
 
 class InventoryItemCard(QFrame):
     equip_clicked = Signal(int)
+    reforge_clicked = Signal(int)
 
     def __init__(self, item_data, parent=None):
         super().__init__(parent)
@@ -108,20 +109,70 @@ class InventoryItemCard(QFrame):
             attr_name = attr.get("name", "")
             attr_value = attr.get("value", 0)
             attr_icon = attr.get("icon", "")
+            multiplier = attr.get("multiplier", 1.0)
             if attr.get("is_percent"):
                 attr_text = f"{attr_icon} {attr_name} +{attr_value}%"
             else:
                 attr_text = f"{attr_icon} {attr_name} +{attr_value}"
+            if multiplier != 1.0:
+                attr_text += f" (x{multiplier})"
             attr_label = QLabel(attr_text)
             attr_label.setStyleSheet("color: #88ddff; font-size: 11px;")
             layout.addWidget(attr_label)
+
+        has_affix = item_data.get("has_affix", False)
+        affix = item_data.get("affix")
+        if has_affix and affix:
+            affix_name = affix.get("name", "")
+            affix_value = affix.get("value", 0)
+            affix_text = f"✨ 特殊词条：{affix_name} +{int(affix_value * 100)}%"
+            affix_label = QLabel(affix_text)
+            affix_label.setStyleSheet("color: #ffaa33; font-size: 11px; font-weight: bold;")
+            affix_label.setWordWrap(True)
+            layout.addWidget(affix_label)
+        elif level >= 10 and not has_affix:
+            affix_label = QLabel("✨ +10解锁特殊词条")
+            affix_label.setStyleSheet("color: #888; font-size: 10px;")
+            layout.addWidget(affix_label)
+        elif level < 10:
+            affix_label = QLabel(f"🔒 +10解锁特殊词条（当前+{level}）")
+            affix_label.setStyleSheet("color: #666; font-size: 10px;")
+            layout.addWidget(affix_label)
 
         if self.is_equipped:
             equip_label = QLabel("✅ 已装备")
             equip_label.setAlignment(Qt.AlignCenter)
             equip_label.setStyleSheet("color: #66ff66; font-size: 11px; font-weight: bold;")
             layout.addWidget(equip_label)
+
+            self.reforge_button = QPushButton("🔨 重铸品质 (500金币)")
+            self.reforge_button.setFixedHeight(28)
+            btn_font = QFont()
+            btn_font.setPointSize(10)
+            btn_font.setBold(True)
+            self.reforge_button.setFont(btn_font)
+            self.reforge_button.setCursor(Qt.PointingHandCursor)
+            self.reforge_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #cc6633;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 4px 10px;
+                }
+                QPushButton:hover {
+                    background-color: #dd7744;
+                }
+                QPushButton:pressed {
+                    background-color: #bb5522;
+                }
+            """)
+            self.reforge_button.clicked.connect(self._on_reforge_clicked)
+            layout.addWidget(self.reforge_button)
         else:
+            btn_layout = QHBoxLayout()
+            btn_layout.setSpacing(6)
+
             self.equip_button = QPushButton("一键换上")
             self.equip_button.setFixedHeight(28)
             btn_font = QFont()
@@ -145,7 +196,31 @@ class InventoryItemCard(QFrame):
                 }
             """)
             self.equip_button.clicked.connect(self._on_equip_clicked)
-            layout.addWidget(self.equip_button)
+
+            self.reforge_button = QPushButton("🔨 重铸")
+            self.reforge_button.setFixedHeight(28)
+            self.reforge_button.setFont(btn_font)
+            self.reforge_button.setCursor(Qt.PointingHandCursor)
+            self.reforge_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #cc6633;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 4px 10px;
+                }
+                QPushButton:hover {
+                    background-color: #dd7744;
+                }
+                QPushButton:pressed {
+                    background-color: #bb5522;
+                }
+            """)
+            self.reforge_button.clicked.connect(self._on_reforge_clicked)
+
+            btn_layout.addWidget(self.equip_button, 1)
+            btn_layout.addWidget(self.reforge_button, 1)
+            layout.addLayout(btn_layout)
 
     def _get_style(self):
         if self.is_equipped:
@@ -172,6 +247,9 @@ class InventoryItemCard(QFrame):
     def _on_equip_clicked(self):
         self.equip_clicked.emit(self.inventory_id)
 
+    def _on_reforge_clicked(self):
+        self.reforge_clicked.emit(self.inventory_id)
+
 
 class InventoryPage(QWidget):
     gold_updated = Signal(int)
@@ -185,6 +263,7 @@ class InventoryPage(QWidget):
         self.api = api_client
         self.items = []
         self._equip_pending = False
+        self._reforge_pending = False
 
         self._init_ui()
         self.refresh_data()
@@ -329,6 +408,7 @@ class InventoryPage(QWidget):
             col = idx % columns
             card = InventoryItemCard(item_data)
             card.equip_clicked.connect(self._on_equip_clicked)
+            card.reforge_clicked.connect(self._on_reforge_clicked)
             self.items_layout.addWidget(card, row, col)
 
     def _on_equip_clicked(self, inventory_id):
@@ -361,3 +441,37 @@ class InventoryPage(QWidget):
             self.refresh_data()
         else:
             QMessageBox.warning(self, "失败", result.get("message", "装备失败"))
+
+    def _on_reforge_clicked(self, inventory_id):
+        if self._reforge_pending:
+            return
+
+        reply = QMessageBox.question(
+            self, "重铸确认",
+            "确定要花费 500 金币重铸这件装备的品质吗？\n重铸后品质将随机变化，特殊词条也会重新生成。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        self._reforge_pending = True
+        self.api.reforge_inventory(inventory_id, self._on_reforge_result)
+
+    def _on_reforge_result(self, result):
+        self._reforge_pending = False
+
+        if not result:
+            QMessageBox.critical(self, "错误", "无法连接服务器")
+            return
+
+        if result.get("success"):
+            QMessageBox.information(self, "重铸成功", result.get("message", "重铸成功"))
+
+            if result.get("gold") is not None:
+                self.gold_updated.emit(result["gold"])
+
+            self.equipment_changed.emit()
+            self.refresh_data()
+        else:
+            QMessageBox.warning(self, "失败", result.get("message", "重铸失败"))

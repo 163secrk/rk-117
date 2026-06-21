@@ -22,6 +22,14 @@ SLOT_ICONS = {
 }
 
 
+QUALITY_COLORS = {
+    "white": "#dddddd",
+    "green": "#66ff66",
+    "purple": "#cc66ff",
+    "orange": "#ffaa33",
+}
+
+
 class EquipmentSlot(QFrame):
     clicked = Signal(str)
 
@@ -33,20 +41,21 @@ class EquipmentSlot(QFrame):
         self.selected = False
         self.level = 0
         self.attribute = None
+        self.quality = "white"
 
         self.setFrameShape(QFrame.StyledPanel)
-        self.setFixedSize(170, 210)
+        self.setFixedSize(170, 230)
         self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet(self._get_style(False))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(4)
+        layout.setSpacing(3)
 
         self.icon_label = QLabel(SLOT_ICONS.get(slot_key, "?"))
         self.icon_label.setAlignment(Qt.AlignCenter)
         icon_font = QFont()
-        icon_font.setPointSize(36)
+        icon_font.setPointSize(32)
         self.icon_label.setFont(icon_font)
 
         self.slot_name_label = QLabel(SLOT_NAMES.get(slot_key, slot_key))
@@ -63,6 +72,13 @@ class EquipmentSlot(QFrame):
         name_font.setPointSize(10)
         self.equip_name_label.setFont(name_font)
 
+        self.quality_label = QLabel("")
+        self.quality_label.setAlignment(Qt.AlignCenter)
+        quality_font = QFont()
+        quality_font.setPointSize(9)
+        quality_font.setBold(True)
+        self.quality_label.setFont(quality_font)
+
         self.level_label = QLabel("")
         self.level_label.setAlignment(Qt.AlignCenter)
         level_font = QFont()
@@ -76,11 +92,20 @@ class EquipmentSlot(QFrame):
         attr_font.setPointSize(9)
         self.attr_label.setFont(attr_font)
 
+        self.affix_label = QLabel("")
+        self.affix_label.setAlignment(Qt.AlignCenter)
+        self.affix_label.setWordWrap(True)
+        affix_font = QFont()
+        affix_font.setPointSize(8)
+        self.affix_label.setFont(affix_font)
+
         layout.addWidget(self.icon_label)
         layout.addWidget(self.slot_name_label)
         layout.addWidget(self.equip_name_label)
+        layout.addWidget(self.quality_label)
         layout.addWidget(self.level_label)
         layout.addWidget(self.attr_label)
+        layout.addWidget(self.affix_label)
         layout.addStretch()
 
     def _get_style(self, selected):
@@ -117,8 +142,16 @@ class EquipmentSlot(QFrame):
             self.is_empty = False
             self.equipment_id = equip_data["id"]
             self.level = equip_data["level"] or 0
+            self.quality = equip_data.get("quality", "white")
+            quality_name = equip_data.get("quality_name", "普通")
+            quality_color = QUALITY_COLORS.get(self.quality, "#dddddd")
+
             self.equip_name_label.setText(equip_data["base_name"])
-            self.equip_name_label.setStyleSheet("color: #ddd;")
+            self.equip_name_label.setStyleSheet(f"color: {quality_color};")
+
+            self.quality_label.setText(f"【{quality_name}】")
+            self.quality_label.setStyleSheet(f"color: {quality_color};")
+
             if self.level > 0:
                 self.level_label.setText(f"+{self.level}")
                 self.level_label.setStyleSheet("color: #ffcc44;")
@@ -128,22 +161,42 @@ class EquipmentSlot(QFrame):
             if self.attribute:
                 val = self.attribute["value"]
                 name = self.attribute["name"]
+                multiplier = self.attribute.get("multiplier", 1.0)
                 if self.attribute.get("is_percent"):
-                    self.attr_label.setText(f'{self.attribute["icon"]} {name} +{val}%')
+                    text = f'{self.attribute["icon"]} {name} +{val}%'
                 else:
-                    self.attr_label.setText(f'{self.attribute["icon"]} {name} +{val}')
+                    text = f'{self.attribute["icon"]} {name} +{val}'
+                if multiplier != 1.0:
+                    text += f" (x{multiplier})"
+                self.attr_label.setText(text)
                 self.attr_label.setStyleSheet("color: #88ddff;")
             else:
                 self.attr_label.setText("")
+
+            has_affix = equip_data.get("has_affix", False)
+            affix = equip_data.get("affix")
+            if has_affix and affix:
+                affix_name = affix.get("name", "")
+                affix_value = affix.get("value", 0)
+                self.affix_label.setText(f"✨ {affix_name} +{int(affix_value * 100)}%")
+                self.affix_label.setStyleSheet("color: #ffaa33; font-weight: bold;")
+            elif self.level < 10:
+                self.affix_label.setText(f"🔒 +10解锁词条")
+                self.affix_label.setStyleSheet("color: #666;")
+            else:
+                self.affix_label.setText("")
         else:
             self.is_empty = True
             self.equipment_id = None
             self.level = 0
+            self.quality = "white"
             self.attribute = None
             self.equip_name_label.setText("（空）")
             self.equip_name_label.setStyleSheet("color: #888;")
+            self.quality_label.setText("")
             self.level_label.setText("")
             self.attr_label.setText("")
+            self.affix_label.setText("")
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -164,6 +217,7 @@ class UpgradePage(QWidget):
         self.slots = {}
         self.equipment_list = []
         self._upgrade_pending = False
+        self._reforge_pending = False
         self._current_info = None
         self.player_scrolls = 0
         self.player_charms = 0
@@ -252,6 +306,9 @@ class UpgradePage(QWidget):
         info_layout = QVBoxLayout(info_frame)
         info_layout.setSpacing(10)
 
+        self.quality_info_label = QLabel("品质：-")
+        self.quality_info_label.setStyleSheet("color: #dddddd; font-size: 13px; font-weight: bold;")
+
         self.attr_current_label = QLabel("当前属性：-")
         self.attr_current_label.setStyleSheet("color: #88ddff; font-size: 13px;")
 
@@ -260,6 +317,10 @@ class UpgradePage(QWidget):
 
         self.level_info_label = QLabel("等级：-")
         self.level_info_label.setStyleSheet("color: #ddd; font-size: 13px;")
+
+        self.affix_info_label = QLabel("")
+        self.affix_info_label.setStyleSheet("color: #ffaa33; font-size: 12px;")
+        self.affix_info_label.setWordWrap(True)
 
         self.cost_label = QLabel("消耗金币：-")
         self.cost_label.setStyleSheet("color: #ffcc44; font-size: 13px;")
@@ -270,9 +331,11 @@ class UpgradePage(QWidget):
         self.rate_label = QLabel("成功率：-")
         self.rate_label.setStyleSheet("color: #88ff88; font-size: 13px;")
 
+        info_layout.addWidget(self.quality_info_label)
         info_layout.addWidget(self.attr_current_label)
         info_layout.addWidget(self.attr_next_label)
         info_layout.addWidget(self.level_info_label)
+        info_layout.addWidget(self.affix_info_label)
         info_layout.addWidget(self.cost_label)
         info_layout.addWidget(self.stone_cost_label)
         info_layout.addWidget(self.rate_label)
@@ -372,6 +435,36 @@ class UpgradePage(QWidget):
         self.upgrade_button.clicked.connect(self._on_upgrade_clicked)
         right_layout.addWidget(self.upgrade_button)
 
+        self.reforge_button = QPushButton("🔨 重铸品质 (500金币)")
+        self.reforge_button.setEnabled(False)
+        self.reforge_button.setFixedHeight(40)
+        reforge_btn_font = QFont()
+        reforge_btn_font.setPointSize(12)
+        reforge_btn_font.setBold(True)
+        self.reforge_button.setFont(reforge_btn_font)
+        self.reforge_button.setCursor(Qt.PointingHandCursor)
+        self.reforge_button.setStyleSheet("""
+            QPushButton {
+                background-color: #cc6633;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 8px;
+            }
+            QPushButton:hover:enabled {
+                background-color: #dd7744;
+            }
+            QPushButton:pressed:enabled {
+                background-color: #bb5522;
+            }
+            QPushButton:disabled {
+                background-color: #444;
+                color: #888;
+            }
+        """)
+        self.reforge_button.clicked.connect(self._on_reforge_clicked)
+        right_layout.addWidget(self.reforge_button)
+
         self.result_label = QLabel("")
         self.result_label.setAlignment(Qt.AlignCenter)
         self.result_label.setWordWrap(True)
@@ -460,13 +553,16 @@ class UpgradePage(QWidget):
         if slot.is_empty:
             self.current_equip_label.setText(f"{SLOT_NAMES.get(self.selected_slot, '')}：未装备")
             self.current_equip_label.setStyleSheet("color: #888; padding: 10px;")
+            self.quality_info_label.setText("品质：-")
             self.attr_current_label.setText("当前属性：-")
             self.attr_next_label.setText("")
             self.level_info_label.setText("等级：-")
+            self.affix_info_label.setText("")
             self.cost_label.setText("消耗金币：-")
             self.stone_cost_label.setText("消耗强化石：-")
             self.rate_label.setText("成功率：-")
             self.upgrade_button.setEnabled(False)
+            self.reforge_button.setEnabled(False)
             return
 
         equip_data = None
@@ -475,21 +571,43 @@ class UpgradePage(QWidget):
                 equip_data = e
                 break
 
+        quality_name = equip_data.get("quality_name", "普通") if equip_data else "普通"
+        quality_color_key = equip_data.get("quality_color", "white") if equip_data else "white"
+        quality_color = QUALITY_COLORS.get(quality_color_key, "#dddddd")
+        self.quality_info_label.setText(f"品质：【{quality_name}】")
+        self.quality_info_label.setStyleSheet(f"color: {quality_color}; font-size: 13px; font-weight: bold;")
+
         if equip_data and equip_data.get("attribute"):
             attr = equip_data["attribute"]
+            multiplier = attr.get("multiplier", 1.0)
             if attr.get("is_percent"):
-                self.attr_current_label.setText(f'当前属性：{attr["icon"]} {attr["name"]} +{attr["value"]}%')
+                text = f'当前属性：{attr["icon"]} {attr["name"]} +{attr["value"]}%'
             else:
-                self.attr_current_label.setText(f'当前属性：{attr["icon"]} {attr["name"]} +{attr["value"]}')
+                text = f'当前属性：{attr["icon"]} {attr["name"]} +{attr["value"]}'
+            if multiplier != 1.0:
+                text += f' (品质x{multiplier})'
+            self.attr_current_label.setText(text)
         else:
             self.attr_current_label.setText("当前属性：-")
         self.attr_next_label.setText("")
+
+        has_affix = equip_data.get("has_affix", False) if equip_data else False
+        affix = equip_data.get("affix") if equip_data else None
+        if has_affix and affix:
+            affix_name = affix.get("name", "")
+            affix_value = affix.get("value", 0)
+            self.affix_info_label.setText(f"✨ 特殊词条：{affix_name} +{int(affix_value * 100)}%")
+        elif equip_data and equip_data.get("level", 0) < 10:
+            self.affix_info_label.setText(f"🔒 +10解锁特殊词条（当前+{equip_data.get('level', 0)}）")
+        else:
+            self.affix_info_label.setText("")
 
         self.level_info_label.setText("加载中...")
         self.cost_label.setText("消耗金币：-")
         self.stone_cost_label.setText("消耗强化石：-")
         self.rate_label.setText("成功率：-")
         self.upgrade_button.setEnabled(False)
+        self.reforge_button.setEnabled(False)
 
         self.api.get_upgrade_info(slot.equipment_id, self._on_upgrade_info_loaded)
 
@@ -558,6 +676,9 @@ class UpgradePage(QWidget):
             self.upgrade_button.setEnabled(True)
         self.upgrade_button.setText("开始强化")
 
+        if not self._reforge_pending:
+            self.reforge_button.setEnabled(True)
+
     def _on_upgrade_clicked(self):
         if not self.selected_slot or self._upgrade_pending:
             return
@@ -613,5 +734,53 @@ class UpgradePage(QWidget):
         if result.get("lucky_charms") is not None:
             self.player_charms = result["lucky_charms"]
             self.charms_updated.emit(result["lucky_charms"])
+
+        self.refresh_data()
+
+    def _on_reforge_clicked(self):
+        if not self.selected_slot or self._reforge_pending:
+            return
+
+        slot = self.slots[self.selected_slot]
+        if slot.is_empty or not slot.equipment_id:
+            return
+
+        reply = QMessageBox.question(
+            self, "重铸确认",
+            "确定要花费 500 金币重铸这件装备的品质吗？\n重铸后品质将随机变化，特殊词条也会重新生成。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        self._reforge_pending = True
+        self.result_label.setText("重铸中...")
+        self.result_label.setStyleSheet("color: #aaa;")
+        self.reforge_button.setEnabled(False)
+        self.reforge_button.setText("重铸中...")
+        self.upgrade_button.setEnabled(False)
+
+        self.api.reforge_equipment(slot.equipment_id, self._on_reforge_result)
+
+    def _on_reforge_result(self, result):
+        self._reforge_pending = False
+
+        if not result:
+            self.result_label.setText("错误：无法连接服务器")
+            self.result_label.setStyleSheet("color: #ff6666;")
+            self.reforge_button.setEnabled(True)
+            self.reforge_button.setText("🔨 重铸品质 (500金币)")
+            return
+
+        if result.get("success"):
+            self.result_label.setText(result.get("message", "重铸成功！"))
+            self.result_label.setStyleSheet("color: #ffaa33;")
+        else:
+            self.result_label.setText(result.get("message", "重铸失败"))
+            self.result_label.setStyleSheet("color: #ff8866;")
+
+        if result.get("gold") is not None:
+            self.gold_updated.emit(result["gold"])
 
         self.refresh_data()
