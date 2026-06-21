@@ -59,7 +59,7 @@ def get_default_player():
         if not player:
             cursor.execute(
                 "INSERT INTO player (name, gold, enhance_stones, protect_scrolls, lucky_charms) VALUES (?, ?, ?, ?, ?)",
-                ("新玩家", 5000, 30, 0, 0)
+                ("新玩家", 50000, 30, 0, 0)
             )
             player_id = cursor.lastrowid
             default_equips = [
