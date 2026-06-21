@@ -3,7 +3,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from database import init_db, get_db, get_upgrade_cost, get_enhance_stone_cost, get_success_rate
+from database import init_db, get_db, get_upgrade_cost, get_enhance_stone_cost, get_success_rate, get_slot_attribute
 
 app = FastAPI(title="装备强化游戏API")
 
@@ -44,12 +44,35 @@ def get_default_player():
         if not player:
             cursor.execute("INSERT INTO player (name, gold, enhance_stones) VALUES (?, ?, ?)", ("新玩家", 5000, 30))
             player_id = cursor.lastrowid
-            cursor.execute(
+            default_equips = [
+                (player_id, "weapon", "铁剑", 0, "铁剑"),
+                (player_id, "helmet", "布帽", 0, "布帽"),
+                (player_id, "armor", "布衣", 0, "布衣"),
+                (player_id, "necklace", "铜项链", 0, "铜项链"),
+            ]
+            cursor.executemany(
                 "INSERT INTO equipment (player_id, slot, name, level, base_name) VALUES (?, ?, ?, ?, ?)",
-                (player_id, "weapon", "铁剑", 0, "铁剑")
+                default_equips
             )
             cursor.execute("SELECT * FROM player WHERE id = ?", (player_id,))
             player = cursor.fetchone()
+        player_id = player["id"]
+        cursor.execute("SELECT * FROM equipment WHERE player_id = ?", (player_id,))
+        equips = cursor.fetchall()
+        if len(equips) < 4:
+            existing_slots = {e["slot"] for e in equips}
+            all_slots = {
+                "weapon": ("铁剑", "铁剑"),
+                "helmet": ("布帽", "布帽"),
+                "armor": ("布衣", "布衣"),
+                "necklace": ("铜项链", "铜项链"),
+            }
+            for slot, (name, base_name) in all_slots.items():
+                if slot not in existing_slots:
+                    cursor.execute(
+                        "INSERT INTO equipment (player_id, slot, name, level, base_name) VALUES (?, ?, ?, ?, ?)",
+                        (player_id, slot, name, 0, base_name)
+                    )
         return dict(player)
 
 
@@ -72,8 +95,13 @@ def get_equipment():
         for slot in slots:
             equip = next((e for e in equips if e["slot"] == slot), None)
             if equip:
-                display_name = equip["base_name"] if equip["level"] == 0 else f"+{equip['level']} {equip['base_name']}"
+                level = equip["level"] or 0
+                display_name = equip["base_name"] if level == 0 else f"+{level} {equip['base_name']}"
                 equip["display_name"] = display_name
+                attr = get_slot_attribute(slot, level)
+                next_attr = get_slot_attribute(slot, level + 1)
+                equip["attribute"] = attr
+                equip["next_attribute"] = next_attr
                 result.append(equip)
             else:
                 result.append({
@@ -84,7 +112,9 @@ def get_equipment():
                     "level": None,
                     "base_name": None,
                     "display_name": "（空）",
-                    "empty": True
+                    "empty": True,
+                    "attribute": None,
+                    "next_attribute": None
                 })
         return result
 

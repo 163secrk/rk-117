@@ -32,20 +32,21 @@ class EquipmentSlot(QFrame):
         self.is_empty = True
         self.selected = False
         self.level = 0
+        self.attribute = None
 
         self.setFrameShape(QFrame.StyledPanel)
-        self.setFixedSize(160, 180)
+        self.setFixedSize(170, 210)
         self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet(self._get_style(False))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(6)
+        layout.setSpacing(4)
 
         self.icon_label = QLabel(SLOT_ICONS.get(slot_key, "?"))
         self.icon_label.setAlignment(Qt.AlignCenter)
         icon_font = QFont()
-        icon_font.setPointSize(40)
+        icon_font.setPointSize(36)
         self.icon_label.setFont(icon_font)
 
         self.slot_name_label = QLabel(SLOT_NAMES.get(slot_key, slot_key))
@@ -69,11 +70,18 @@ class EquipmentSlot(QFrame):
         level_font.setBold(True)
         self.level_label.setFont(level_font)
 
+        self.attr_label = QLabel("")
+        self.attr_label.setAlignment(Qt.AlignCenter)
+        attr_font = QFont()
+        attr_font.setPointSize(9)
+        self.attr_label.setFont(attr_font)
+
         layout.addWidget(self.icon_label)
         layout.addWidget(self.slot_name_label)
         layout.addWidget(self.equip_name_label)
-        layout.addStretch()
         layout.addWidget(self.level_label)
+        layout.addWidget(self.attr_label)
+        layout.addStretch()
 
     def _get_style(self, selected):
         if selected:
@@ -110,18 +118,32 @@ class EquipmentSlot(QFrame):
             self.equipment_id = equip_data["id"]
             self.level = equip_data["level"] or 0
             self.equip_name_label.setText(equip_data["base_name"])
+            self.equip_name_label.setStyleSheet("color: #ddd;")
             if self.level > 0:
                 self.level_label.setText(f"+{self.level}")
                 self.level_label.setStyleSheet("color: #ffcc44;")
             else:
                 self.level_label.setText("")
+            self.attribute = equip_data.get("attribute")
+            if self.attribute:
+                val = self.attribute["value"]
+                name = self.attribute["name"]
+                if self.attribute.get("is_percent"):
+                    self.attr_label.setText(f'{self.attribute["icon"]} {name} +{val}%')
+                else:
+                    self.attr_label.setText(f'{self.attribute["icon"]} {name} +{val}')
+                self.attr_label.setStyleSheet("color: #88ddff;")
+            else:
+                self.attr_label.setText("")
         else:
             self.is_empty = True
             self.equipment_id = None
             self.level = 0
+            self.attribute = None
             self.equip_name_label.setText("（空）")
             self.equip_name_label.setStyleSheet("color: #888;")
             self.level_label.setText("")
+            self.attr_label.setText("")
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -225,6 +247,12 @@ class UpgradePage(QWidget):
         info_layout = QVBoxLayout(info_frame)
         info_layout.setSpacing(10)
 
+        self.attr_current_label = QLabel("当前属性：-")
+        self.attr_current_label.setStyleSheet("color: #88ddff; font-size: 13px;")
+
+        self.attr_next_label = QLabel("")
+        self.attr_next_label.setStyleSheet("color: #88ff88; font-size: 13px;")
+
         self.level_info_label = QLabel("等级：-")
         self.level_info_label.setStyleSheet("color: #ddd; font-size: 13px;")
 
@@ -237,6 +265,8 @@ class UpgradePage(QWidget):
         self.rate_label = QLabel("成功率：-")
         self.rate_label.setStyleSheet("color: #88ff88; font-size: 13px;")
 
+        info_layout.addWidget(self.attr_current_label)
+        info_layout.addWidget(self.attr_next_label)
         info_layout.addWidget(self.level_info_label)
         info_layout.addWidget(self.cost_label)
         info_layout.addWidget(self.stone_cost_label)
@@ -325,12 +355,30 @@ class UpgradePage(QWidget):
         if slot.is_empty:
             self.current_equip_label.setText(f"{SLOT_NAMES.get(self.selected_slot, '')}：未装备")
             self.current_equip_label.setStyleSheet("color: #888; padding: 10px;")
+            self.attr_current_label.setText("当前属性：-")
+            self.attr_next_label.setText("")
             self.level_info_label.setText("等级：-")
             self.cost_label.setText("消耗金币：-")
             self.stone_cost_label.setText("消耗强化石：-")
             self.rate_label.setText("成功率：-")
             self.upgrade_button.setEnabled(False)
             return
+
+        equip_data = None
+        for e in self.equipment_list:
+            if e.get("slot") == self.selected_slot:
+                equip_data = e
+                break
+
+        if equip_data and equip_data.get("attribute"):
+            attr = equip_data["attribute"]
+            if attr.get("is_percent"):
+                self.attr_current_label.setText(f'当前属性：{attr["icon"]} {attr["name"]} +{attr["value"]}%')
+            else:
+                self.attr_current_label.setText(f'当前属性：{attr["icon"]} {attr["name"]} +{attr["value"]}')
+        else:
+            self.attr_current_label.setText("当前属性：-")
+        self.attr_next_label.setText("")
 
         self.level_info_label.setText("加载中...")
         self.cost_label.setText("消耗金币：-")
@@ -349,9 +397,22 @@ class UpgradePage(QWidget):
         if not slot:
             return
 
+        equip_data = None
+        for e in self.equipment_list:
+            if e.get("slot") == self.selected_slot:
+                equip_data = e
+                break
+
         if info.get("is_max"):
             self.current_equip_label.setText(f"+{info['current_level']} {slot.equip_name_label.text()}")
             self.current_equip_label.setStyleSheet("color: #ff88ff; padding: 10px;")
+            if equip_data and equip_data.get("attribute"):
+                attr = equip_data["attribute"]
+                if attr.get("is_percent"):
+                    self.attr_current_label.setText(f'当前属性：{attr["icon"]} {attr["name"]} +{attr["value"]}% (已满级)')
+                else:
+                    self.attr_current_label.setText(f'当前属性：{attr["icon"]} {attr["name"]} +{attr["value"]} (已满级)')
+            self.attr_next_label.setText("")
             self.level_info_label.setText(f"已达最高等级 +{info['max_level']}")
             self.cost_label.setText("消耗金币：-")
             self.stone_cost_label.setText("消耗强化石：-")
@@ -362,6 +423,21 @@ class UpgradePage(QWidget):
 
         self.current_equip_label.setText(f"+{info['current_level']} {slot.equip_name_label.text()}")
         self.current_equip_label.setStyleSheet("color: #ffcc44; padding: 10px;")
+
+        if equip_data and equip_data.get("next_attribute"):
+            next_attr = equip_data["next_attribute"]
+            cur_attr = equip_data.get("attribute")
+            if next_attr.get("is_percent"):
+                cur_val = cur_attr["value"] if cur_attr else 0
+                self.attr_next_label.setText(
+                    f'强化后：{next_attr["icon"]} {next_attr["name"]} +{cur_val}% → +{next_attr["value"]}%'
+                )
+            else:
+                cur_val = cur_attr["value"] if cur_attr else 0
+                self.attr_next_label.setText(
+                    f'强化后：{next_attr["icon"]} {next_attr["name"]} +{cur_val} → +{next_attr["value"]}'
+                )
+
         self.level_info_label.setText(
             f"当前等级：+{info['current_level']}   →   目标：+{info['next_level']}"
         )

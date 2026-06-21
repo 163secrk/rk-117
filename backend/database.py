@@ -47,10 +47,39 @@ def init_db():
         if count == 0:
             cursor.execute("INSERT INTO player (name, gold, enhance_stones) VALUES (?, ?, ?)", ("新玩家", 5000, 30))
             player_id = cursor.lastrowid
-            cursor.execute(
+            default_equips = [
+                (player_id, "weapon", "铁剑", 0, "铁剑"),
+                (player_id, "helmet", "布帽", 0, "布帽"),
+                (player_id, "armor", "布衣", 0, "布衣"),
+                (player_id, "necklace", "铜项链", 0, "铜项链"),
+            ]
+            cursor.executemany(
                 "INSERT INTO equipment (player_id, slot, name, level, base_name) VALUES (?, ?, ?, ?, ?)",
-                (player_id, "weapon", "铁剑", 0, "铁剑")
+                default_equips
             )
+
+
+SLOT_ATTRIBUTE_INFO = {
+    "weapon": {"attr_key": "attack", "attr_name": "攻击", "icon": "⚔", "per_level": 5},
+    "helmet": {"attr_key": "hp", "attr_name": "血量", "icon": "❤", "per_level": 20},
+    "armor": {"attr_key": "defense", "attr_name": "防御", "icon": "🛡", "per_level": 3},
+    "necklace": {"attr_key": "crit", "attr_name": "暴击率", "icon": "💥", "per_level": 1, "is_percent": True},
+}
+
+
+def get_slot_attribute(slot: str, level: int):
+    info = SLOT_ATTRIBUTE_INFO.get(slot)
+    if not info:
+        return None
+    value = info["per_level"] * level
+    return {
+        "key": info["attr_key"],
+        "name": info["attr_name"],
+        "icon": info["icon"],
+        "value": value,
+        "per_level": info["per_level"],
+        "is_percent": info.get("is_percent", False),
+    }
 
 
 def get_upgrade_cost(level: int) -> int:
