@@ -139,8 +139,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("装备强化游戏")
-        self.setMinimumSize(900, 650)
-        self.resize(960, 680)
+        self.setMinimumSize(900, 720)
+        self.resize(1000, 750)
 
         self.api = ApiClient()
         self.current_stones = 0

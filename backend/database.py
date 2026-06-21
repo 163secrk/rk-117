@@ -88,9 +88,9 @@ def get_upgrade_cost(level: int) -> int:
 
 
 def get_enhance_stone_cost(level: int) -> int:
-    if level < 5:
+    if level < 6:
         return 1
-    return level - 3
+    return level - 4
 
 
 def get_success_rate(level: int) -> float:

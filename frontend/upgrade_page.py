@@ -345,6 +345,7 @@ class UpgradePage(QWidget):
             slot.set_selected(key == slot_key)
 
         self.selected_slot = slot_key
+        self.result_label.setText("")
         self._update_upgrade_panel()
 
     def _update_upgrade_panel(self):
