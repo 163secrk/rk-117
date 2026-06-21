@@ -116,6 +116,22 @@ class ApiClient(QObject):
         except Exception:
             return None
 
+    def get_player_power_sync(self):
+        try:
+            resp = requests.get(f"{self.base_url}/api/wild/player_power", timeout=5)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            return None
+
+    def hunt_monster_sync(self):
+        try:
+            resp = requests.post(f"{self.base_url}/api/wild/hunt", timeout=5)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            return None
+
     def get_player(self, callback, error_callback=None):
         self._run_async(self.get_player_sync, callback, error_callback)
 
@@ -139,3 +155,9 @@ class ApiClient(QObject):
 
     def buy_lucky_charms(self, amount, callback, error_callback=None):
         self._run_async(self.buy_lucky_charms_sync, callback, error_callback, amount)
+
+    def get_player_power(self, callback, error_callback=None):
+        self._run_async(self.get_player_power_sync, callback, error_callback)
+
+    def hunt_monster(self, callback, error_callback=None):
+        self._run_async(self.hunt_monster_sync, callback, error_callback)

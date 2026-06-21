@@ -132,3 +132,82 @@ def get_success_rate(level: int) -> float:
         19: 0.02,
     }
     return rates.get(level, 0.01)
+
+
+EQUIPMENT_TIERS = [
+    {"min_level": 0, "max_level": 3, "quality": "普通", "color": "white",
+     "names": {"weapon": "铁剑", "helmet": "布帽", "armor": "布衣", "necklace": "铜项链"}},
+    {"min_level": 4, "max_level": 7, "quality": "优秀", "color": "green",
+     "names": {"weapon": "钢剑", "helmet": "皮帽", "armor": "皮甲", "necklace": "银项链"}},
+    {"min_level": 8, "max_level": 11, "quality": "稀有", "color": "blue",
+     "names": {"weapon": "精钢剑", "helmet": "铁盔", "armor": "铁甲", "necklace": "金项链"}},
+    {"min_level": 12, "max_level": 15, "quality": "史诗", "color": "purple",
+     "names": {"weapon": "秘银剑", "helmet": "钢盔", "armor": "钢甲", "necklace": "宝石项链"}},
+    {"min_level": 16, "max_level": 20, "quality": "传说", "color": "orange",
+     "names": {"weapon": "龙牙剑", "helmet": "龙骨盔", "armor": "龙鳞甲", "necklace": "龙心项链"}},
+]
+
+
+def get_equipment_tier(level: int):
+    for tier in reversed(EQUIPMENT_TIERS):
+        if level >= tier["min_level"]:
+            return tier
+    return EQUIPMENT_TIERS[0]
+
+
+def get_equipment_base_name(slot: str, level: int) -> str:
+    tier = get_equipment_tier(level)
+    return tier["names"].get(slot, "未知")
+
+
+def get_equipment_quality(level: int) -> str:
+    tier = get_equipment_tier(level)
+    return tier["quality"]
+
+
+def get_equipment_quality_color(level: int) -> str:
+    tier = get_equipment_tier(level)
+    return tier["color"]
+
+
+MONSTER_TIERS = [
+    {"tier": "weak", "power_range": (20, 80), "hp_range": (50, 150),
+     "names": ["史莱姆", "哥布林", "野狼", "毒蜘蛛", "蝙蝠", "骷髅兵"]},
+    {"tier": "normal", "power_range": (80, 200), "hp_range": (150, 400),
+     "names": ["兽人战士", "石像鬼", "狼人", "巨型蝎子", "暗影刺客", "食人魔"]},
+    {"tier": "strong", "power_range": (200, 500), "hp_range": (400, 1000),
+     "names": ["巨魔", "独眼巨人", "龙人", "黑暗骑士", "火焰元素", "冰霜巨人"]},
+    {"tier": "elite", "power_range": (500, 1200), "hp_range": (1000, 2500),
+     "names": ["远古巨龙", "恶魔领主", "死灵法师", "深渊领主", "泰坦守卫", "凤凰"]},
+    {"tier": "boss", "power_range": (1200, 3000), "hp_range": (2500, 6000),
+     "names": ["毁灭之王", "虚空之主", "时光守护者", "混沌邪神", "世界树化身", "星海巨兽"]},
+]
+
+
+def calculate_player_power(player_id: int) -> int:
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM equipment WHERE player_id = ?", (player_id,))
+        equips = cursor.fetchall()
+
+    total_power = 50
+
+    for equip in equips:
+        slot = equip["slot"]
+        level = equip["level"] or 0
+        attr = get_slot_attribute(slot, level)
+        if attr:
+            value = attr["value"]
+            if attr.get("is_percent"):
+                total_power += value * 20
+            else:
+                if attr["key"] == "attack":
+                    total_power += value * 3
+                elif attr["key"] == "hp":
+                    total_power += value // 5
+                elif attr["key"] == "defense":
+                    total_power += value * 4
+                else:
+                    total_power += value
+
+    return total_power

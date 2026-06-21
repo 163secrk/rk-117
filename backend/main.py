@@ -3,7 +3,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from database import init_db, get_db, get_upgrade_cost, get_enhance_stone_cost, get_success_rate, get_slot_attribute
+from database import (
+    init_db, get_db, get_upgrade_cost, get_enhance_stone_cost, get_success_rate,
+    get_slot_attribute, MONSTER_TIERS, calculate_player_power,
+    get_equipment_base_name, get_equipment_quality, get_equipment_quality_color
+)
 
 app = FastAPI(title="装备强化游戏API")
 
@@ -355,4 +359,216 @@ def buy_lucky_charms(amount: int):
             enhance_stones=new_stones,
             protect_scrolls=new_scrolls,
             lucky_charms=new_charms
+        )
+
+
+class MonsterInfo(BaseModel):
+    name: str
+    power: int
+    hp: int
+    tier: str
+
+
+class EquipmentDrop(BaseModel):
+    id: int
+    slot: str
+    name: str
+    base_name: str
+    level: int
+    quality: str
+    quality_color: str
+    display_name: str
+    is_better: bool
+    attribute: dict
+
+
+class HuntResponse(BaseModel):
+    success: bool
+    message: str
+    monster: MonsterInfo | None = None
+    victory: bool = False
+    gold_reward: int = 0
+    equipment_drop: EquipmentDrop | None = None
+    player_power: int = 0
+    gold: int | None = None
+    enhance_stones: int | None = None
+    protect_scrolls: int | None = None
+    lucky_charms: int | None = None
+
+
+def _generate_monster(player_power: int) -> dict:
+    if player_power < 100:
+        tier_idx = 0
+    elif player_power < 250:
+        tier_idx = random.choice([0, 1])
+    elif player_power < 600:
+        tier_idx = random.choice([1, 2])
+    elif player_power < 1500:
+        tier_idx = random.choice([2, 3])
+    else:
+        tier_idx = random.choice([3, 4])
+
+    tier = MONSTER_TIERS[tier_idx]
+    name = random.choice(tier["names"])
+    min_p, max_p = tier["power_range"]
+    min_h, max_h = tier["hp_range"]
+
+    variance = 0.2
+    power_base = min(max(player_power, min_p), max_p)
+    power_min = int(power_base * (1 - variance))
+    power_max = int(power_base * (1 + variance))
+    power = max(min_p, min(max_p, random.randint(power_min, power_max)))
+
+    hp_min = int(min_h + (power - min_p) / max(1, max_p - min_p) * (max_h - min_h))
+    hp_max = int(hp_min * 1.3)
+    hp = random.randint(max(min_h, hp_min), min(max_h, hp_max))
+
+    return {
+        "name": name,
+        "power": power,
+        "hp": hp,
+        "tier": tier["tier"]
+    }
+
+
+def _roll_equipment_drop(monster_power: int, player_id: int) -> dict | None:
+    drop_chance = 0.35 + min(0.3, monster_power / 3000)
+    if random.random() > drop_chance:
+        return None
+
+    slots = ["weapon", "helmet", "armor", "necklace"]
+    slot = random.choice(slots)
+
+    max_level_from_power = min(20, int(monster_power / 80) + 1)
+
+    level_weights = []
+    for lv in range(0, max_level_from_power + 1):
+        weight = max(1, max_level_from_power - lv + 1)
+        level_weights.append((lv, weight))
+
+    total_weight = sum(w for _, w in level_weights)
+    roll = random.randint(1, total_weight)
+    cum = 0
+    level = 0
+    for lv, w in level_weights:
+        cum += w
+        if roll <= cum:
+            level = lv
+            break
+
+    level = min(20, max(0, level))
+
+    base_name = get_equipment_base_name(slot, level)
+    quality = get_equipment_quality(level)
+    quality_color = get_equipment_quality_color(level)
+    display_name = f"+{level} {base_name}" if level > 0 else base_name
+    attr = get_slot_attribute(slot, level)
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM equipment WHERE player_id = ? AND slot = ?",
+            (player_id, slot)
+        )
+        current = cursor.fetchone()
+        is_better = True
+        if current and current["level"] >= level:
+            is_better = False
+
+        if is_better:
+            if current:
+                cursor.execute(
+                    "UPDATE equipment SET name = ?, level = ?, base_name = ? WHERE id = ?",
+                    (base_name, level, base_name, current["id"])
+                )
+                equip_id = current["id"]
+            else:
+                cursor.execute(
+                    "INSERT INTO equipment (player_id, slot, name, level, base_name) VALUES (?, ?, ?, ?, ?)",
+                    (player_id, slot, base_name, level, base_name)
+                )
+                equip_id = cursor.lastrowid
+        else:
+            equip_id = current["id"] if current else None
+
+    return {
+        "id": equip_id,
+        "slot": slot,
+        "name": display_name,
+        "base_name": base_name,
+        "level": level,
+        "quality": quality,
+        "quality_color": quality_color,
+        "display_name": display_name,
+        "is_better": is_better,
+        "attribute": attr
+    }
+
+
+@app.get("/api/wild/player_power")
+def get_player_power():
+    player = get_default_player()
+    power = calculate_player_power(player["id"])
+    return {"player_power": power}
+
+
+@app.post("/api/wild/hunt")
+def hunt_monster():
+    player = get_default_player()
+    player_id = player["id"]
+    player_power = calculate_player_power(player_id)
+
+    monster = _generate_monster(player_power)
+
+    victory = player_power > monster["power"]
+
+    gold_reward = 0
+    equip_drop = None
+
+    if victory:
+        base_gold = monster["power"] // 3
+        gold_reward = random.randint(max(10, int(base_gold * 0.7)), int(base_gold * 1.3))
+
+        equip_drop = _roll_equipment_drop(monster["power"], player_id)
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE player SET gold = gold + ? WHERE id = ?",
+                (gold_reward, player_id)
+            )
+            cursor.execute(
+                "SELECT gold, enhance_stones, protect_scrolls, lucky_charms FROM player WHERE id = ?",
+                (player_id,)
+            )
+            player_data = cursor.fetchone()
+
+        msg = f"战斗胜利！击败了 {monster['name']}"
+        return HuntResponse(
+            success=True,
+            message=msg,
+            monster=MonsterInfo(**monster),
+            victory=True,
+            gold_reward=gold_reward,
+            equipment_drop=EquipmentDrop(**equip_drop) if equip_drop else None,
+            player_power=player_power,
+            gold=player_data["gold"],
+            enhance_stones=player_data["enhance_stones"],
+            protect_scrolls=player_data["protect_scrolls"],
+            lucky_charms=player_data["lucky_charms"],
+        )
+    else:
+        msg = f"战斗失败！{monster['name']} 太强了，快提升战力再来挑战吧"
+        return HuntResponse(
+            success=True,
+            message=msg,
+            monster=MonsterInfo(**monster),
+            victory=False,
+            gold_reward=0,
+            equipment_drop=None,
+            player_power=player_power,
+            gold=player["gold"],
+            enhance_stones=player["enhance_stones"],
+            protect_scrolls=player["protect_scrolls"],
+            lucky_charms=player["lucky_charms"],
         )

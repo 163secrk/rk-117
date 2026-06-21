@@ -9,6 +9,7 @@ from PySide6.QtGui import QFont, QIcon
 
 from api_client import ApiClient
 from upgrade_page import UpgradePage
+from wild_page import WildPage
 
 
 SHOP_ITEMS = [
@@ -343,6 +344,14 @@ class MainWindow(QMainWindow):
         self.upgrade_page.charms_updated.connect(self._update_charms)
         self.tab_widget.addTab(self.upgrade_page, "强化")
 
+        self.wild_page = WildPage(self.api)
+        self.wild_page.gold_updated.connect(self._update_gold)
+        self.wild_page.stones_updated.connect(self._update_stones)
+        self.wild_page.scrolls_updated.connect(self._update_scrolls)
+        self.wild_page.charms_updated.connect(self._update_charms)
+        self.wild_page.equipment_changed.connect(self._on_equipment_changed)
+        self.tab_widget.addTab(self.wild_page, "野外")
+
         main_layout.addWidget(self.tab_widget, 1)
 
         self._refresh_gold()
@@ -386,6 +395,10 @@ class MainWindow(QMainWindow):
 
         dialog = ShopDialog(self.api, current_gold, self.current_stones, self.current_scrolls, self.current_charms, self)
         dialog.exec()
+        self.upgrade_page.refresh_data()
+        self.wild_page.refresh_data()
+
+    def _on_equipment_changed(self):
         self.upgrade_page.refresh_data()
 
 
