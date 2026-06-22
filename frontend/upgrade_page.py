@@ -209,6 +209,7 @@ class UpgradePage(QWidget):
     stones_updated = Signal(int)
     scrolls_updated = Signal(int)
     charms_updated = Signal(int)
+    equipment_changed = Signal()
 
     def __init__(self, api_client: ApiClient, parent=None):
         super().__init__(parent)
@@ -735,6 +736,9 @@ class UpgradePage(QWidget):
             self.player_charms = result["lucky_charms"]
             self.charms_updated.emit(result["lucky_charms"])
 
+        if result.get("success"):
+            self.equipment_changed.emit()
+
         self.refresh_data()
 
     def _on_reforge_clicked(self):
@@ -782,5 +786,8 @@ class UpgradePage(QWidget):
 
         if result.get("gold") is not None:
             self.gold_updated.emit(result["gold"])
+
+        if result.get("success"):
+            self.equipment_changed.emit()
 
         self.refresh_data()

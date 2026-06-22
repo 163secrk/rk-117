@@ -437,7 +437,7 @@ class WildPage(QWidget):
         if result.get("lucky_charms") is not None:
             self.charms_updated.emit(result["lucky_charms"])
 
-        if result.get("equipment_drop") and result["equipment_drop"].get("is_better"):
+        if result.get("equipment_drop"):
             self.equipment_changed.emit()
 
         self.hunt_button.setEnabled(True)

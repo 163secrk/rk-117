@@ -244,12 +244,24 @@ def upgrade_equipment(equipment_id: int, request: UpgradeRequest = UpgradeReques
                         "UPDATE equipment SET level = ?, affix_key = ?, affix_value = ?, affix_name = ? WHERE id = ?",
                         (new_level, affix["key"], affix["value"], affix["name"], equipment_id)
                     )
+                    cursor.execute(
+                        "UPDATE inventory SET level = ?, affix_key = ?, affix_value = ?, affix_name = ? WHERE player_id = ? AND slot = ? AND is_equipped = 1",
+                        (new_level, affix["key"], affix["value"], affix["name"], player["id"], slot)
+                    )
                     affix_unlocked = True
                     affix_name = affix["name"]
                 else:
                     cursor.execute("UPDATE equipment SET level = ? WHERE id = ?", (new_level, equipment_id))
+                    cursor.execute(
+                        "UPDATE inventory SET level = ? WHERE player_id = ? AND slot = ? AND is_equipped = 1",
+                        (new_level, player["id"], slot)
+                    )
             else:
                 cursor.execute("UPDATE equipment SET level = ? WHERE id = ?", (new_level, equipment_id))
+                cursor.execute(
+                    "UPDATE inventory SET level = ? WHERE player_id = ? AND slot = ? AND is_equipped = 1",
+                    (new_level, player["id"], slot)
+                )
 
             msg = f"强化成功！+{current_level} → +{new_level}"
             if use_lucky:
@@ -691,8 +703,11 @@ class InventoryItem(BaseModel):
     is_equipped: bool
     display_name: str
     quality: str
+    quality_key: str = "white"
     quality_color: str
     attribute: dict | None = None
+    has_affix: bool = False
+    affix: dict | None = None
 
 
 class InventoryResponse(BaseModel):
@@ -889,12 +904,22 @@ def reforge_equipment(equipment_id: int):
 
         slot = equip["slot"]
         level = equip["level"]
+
+        cursor.execute(
+            "UPDATE inventory SET quality = ?, affix_key = NULL, affix_value = NULL, affix_name = NULL WHERE player_id = ? AND slot = ? AND is_equipped = 1",
+            (new_quality, player_id, slot)
+        )
+
         if level >= 10:
             affix = roll_random_affix(slot, new_quality)
             if affix:
                 cursor.execute(
                     "UPDATE equipment SET affix_key = ?, affix_value = ?, affix_name = ? WHERE id = ?",
                     (affix["key"], affix["value"], affix["name"], equipment_id)
+                )
+                cursor.execute(
+                    "UPDATE inventory SET affix_key = ?, affix_value = ?, affix_name = ? WHERE player_id = ? AND slot = ? AND is_equipped = 1",
+                    (affix["key"], affix["value"], affix["name"], player_id, slot)
                 )
 
         cursor.execute(
@@ -956,9 +981,10 @@ def reforge_inventory(inventory_id: int):
             "SELECT * FROM inventory WHERE id = ? AND player_id = ?",
             (inventory_id, player_id)
         )
-        item = cursor.fetchone()
-        if not item:
+        item_row = cursor.fetchone()
+        if not item_row:
             return ReforgeResponse(success=False, message="装备不存在")
+        item = dict(item_row)
 
         old_quality = item["quality"]
         old_quality_name = get_quality_name(old_quality)
@@ -977,12 +1003,13 @@ def reforge_inventory(inventory_id: int):
 
         slot = item["slot"]
         level = item["level"]
+        new_affix = None
         if level >= 10:
-            affix = roll_random_affix(slot, new_quality)
-            if affix:
+            new_affix = roll_random_affix(slot, new_quality)
+            if new_affix:
                 cursor.execute(
                     "UPDATE inventory SET affix_key = ?, affix_value = ?, affix_name = ? WHERE id = ?",
-                    (affix["key"], affix["value"], affix["name"], inventory_id)
+                    (new_affix["key"], new_affix["value"], new_affix["name"], inventory_id)
                 )
 
         if item["is_equipped"]:
@@ -990,13 +1017,11 @@ def reforge_inventory(inventory_id: int):
                 "UPDATE equipment SET quality = ?, affix_key = NULL, affix_value = NULL, affix_name = NULL WHERE player_id = ? AND slot = ?",
                 (new_quality, player_id, slot)
             )
-            if level >= 10:
-                affix = roll_random_affix(slot, new_quality)
-                if affix:
-                    cursor.execute(
-                        "UPDATE equipment SET affix_key = ?, affix_value = ?, affix_name = ? WHERE player_id = ? AND slot = ?",
-                        (affix["key"], affix["value"], affix["name"], player_id, slot)
-                    )
+            if new_affix:
+                cursor.execute(
+                    "UPDATE equipment SET affix_key = ?, affix_value = ?, affix_name = ? WHERE player_id = ? AND slot = ?",
+                    (new_affix["key"], new_affix["value"], new_affix["name"], player_id, slot)
+                )
 
         cursor.execute(
             "SELECT gold, enhance_stones, protect_scrolls, lucky_charms FROM player WHERE id = ?",

@@ -343,6 +343,7 @@ class MainWindow(QMainWindow):
         self.upgrade_page.stones_updated.connect(self._update_stones)
         self.upgrade_page.scrolls_updated.connect(self._update_scrolls)
         self.upgrade_page.charms_updated.connect(self._update_charms)
+        self.upgrade_page.equipment_changed.connect(self._on_equipment_changed)
         self.tab_widget.addTab(self.upgrade_page, "强化")
 
         self.wild_page = WildPage(self.api)
@@ -362,6 +363,8 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.inventory_page, "背包")
 
         main_layout.addWidget(self.tab_widget, 1)
+
+        self.tab_widget.currentChanged.connect(self._on_tab_changed)
 
         self._refresh_gold()
 
@@ -412,6 +415,14 @@ class MainWindow(QMainWindow):
         self.upgrade_page.refresh_data()
         self.wild_page.refresh_power()
         self.inventory_page.refresh_data()
+
+    def _on_tab_changed(self, index):
+        if index == 0:
+            self.upgrade_page.refresh_data()
+        elif index == 1:
+            self.wild_page.refresh_data()
+        elif index == 2:
+            self.inventory_page.refresh_data()
 
 
 def main():
