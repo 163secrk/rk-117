@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QIcon
 
-from api_client import ApiClient
+from game_service import GameService
 from upgrade_page import UpgradePage
 from wild_page import WildPage
 from inventory_page import InventoryPage
@@ -21,9 +21,9 @@ SHOP_ITEMS = [
 
 
 class ShopDialog(QDialog):
-    def __init__(self, api_client, current_gold, current_stones, current_scrolls, current_charms, parent=None):
+    def __init__(self, game_service, current_gold, current_stones, current_scrolls, current_charms, parent=None):
         super().__init__(parent)
-        self.api = api_client
+        self.game = game_service
         self.setWindowTitle("商店")
         self.setFixedSize(420, 380)
         self.setStyleSheet("""
@@ -155,18 +155,24 @@ class ShopDialog(QDialog):
         amount = self.amount_spin.value()
         self.buy_button.setEnabled(False)
         self.buy_button.setText("购买中...")
+
         if item["key"] == "stones":
-            self.api.buy_stones(amount, self._on_buy_result)
+            result = self.game.buy_stones(amount)
         elif item["key"] == "protect":
-            self.api.buy_protect_scrolls(amount, self._on_buy_result)
+            result = self.game.buy_protect_scrolls(amount)
         elif item["key"] == "lucky":
-            self.api.buy_lucky_charms(amount, self._on_buy_result)
+            result = self.game.buy_lucky_charms(amount)
+        else:
+            result = None
+
+        self._on_buy_result(result)
 
     def _on_buy_result(self, result):
+        self.buy_button.setEnabled(True)
+        self.buy_button.setText("购买")
+
         if not result:
-            QMessageBox.critical(self, "错误", "无法连接服务器")
-            self.buy_button.setEnabled(True)
-            self.buy_button.setText("购买")
+            QMessageBox.critical(self, "错误", "购买失败")
             return
 
         if result.get("success"):
@@ -189,9 +195,6 @@ class ShopDialog(QDialog):
         else:
             QMessageBox.warning(self, "失败", result.get("message", "购买失败"))
 
-        self.buy_button.setEnabled(True)
-        self.buy_button.setText("购买")
-
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -200,7 +203,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(900, 720)
         self.resize(1000, 750)
 
-        self.api = ApiClient()
+        self.game = GameService()
         self.current_stones = 0
         self.current_scrolls = 0
         self.current_charms = 0
@@ -338,7 +341,7 @@ class MainWindow(QMainWindow):
         self.tab_widget = QTabWidget()
         self.tab_widget.setDocumentMode(True)
 
-        self.upgrade_page = UpgradePage(self.api)
+        self.upgrade_page = UpgradePage(self.game)
         self.upgrade_page.gold_updated.connect(self._update_gold)
         self.upgrade_page.stones_updated.connect(self._update_stones)
         self.upgrade_page.scrolls_updated.connect(self._update_scrolls)
@@ -346,7 +349,7 @@ class MainWindow(QMainWindow):
         self.upgrade_page.equipment_changed.connect(self._on_equipment_changed)
         self.tab_widget.addTab(self.upgrade_page, "强化")
 
-        self.wild_page = WildPage(self.api)
+        self.wild_page = WildPage(self.game)
         self.wild_page.gold_updated.connect(self._update_gold)
         self.wild_page.stones_updated.connect(self._update_stones)
         self.wild_page.scrolls_updated.connect(self._update_scrolls)
@@ -354,7 +357,7 @@ class MainWindow(QMainWindow):
         self.wild_page.equipment_changed.connect(self._on_equipment_changed)
         self.tab_widget.addTab(self.wild_page, "野外")
 
-        self.inventory_page = InventoryPage(self.api)
+        self.inventory_page = InventoryPage(self.game)
         self.inventory_page.gold_updated.connect(self._update_gold)
         self.inventory_page.stones_updated.connect(self._update_stones)
         self.inventory_page.scrolls_updated.connect(self._update_scrolls)
@@ -369,7 +372,8 @@ class MainWindow(QMainWindow):
         self._refresh_gold()
 
     def _refresh_gold(self):
-        self.api.get_player(self._on_player_loaded)
+        player = self.game.get_player()
+        self._on_player_loaded(player)
 
     def _on_player_loaded(self, player):
         if player and player.get("gold") is not None:
@@ -405,7 +409,7 @@ class MainWindow(QMainWindow):
         except:
             pass
 
-        dialog = ShopDialog(self.api, current_gold, self.current_stones, self.current_scrolls, self.current_charms, self)
+        dialog = ShopDialog(self.game, current_gold, self.current_stones, self.current_scrolls, self.current_charms, self)
         dialog.exec()
         self.upgrade_page.refresh_data()
         self.wild_page.refresh_data()

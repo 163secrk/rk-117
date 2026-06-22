@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
-from api_client import ApiClient
+from game_service import GameService
 
 SLOT_NAMES = {
     "weapon": "武器",
@@ -258,12 +258,10 @@ class InventoryPage(QWidget):
     charms_updated = Signal(int)
     equipment_changed = Signal()
 
-    def __init__(self, api_client: ApiClient, parent=None):
+    def __init__(self, game_service: GameService, parent=None):
         super().__init__(parent)
-        self.api = api_client
+        self.game = game_service
         self.items = []
-        self._equip_pending = False
-        self._reforge_pending = False
 
         self._init_ui()
         self.refresh_data()
@@ -364,13 +362,7 @@ class InventoryPage(QWidget):
         main_layout.addWidget(self.tip_label)
 
     def refresh_data(self):
-        self.refresh_btn.setEnabled(False)
-        self.refresh_btn.setText("刷新中...")
-        self.api.get_inventory(self._on_inventory_loaded)
-
-    def _on_inventory_loaded(self, result):
-        self.refresh_btn.setEnabled(True)
-        self.refresh_btn.setText("🔄 刷新")
+        result = self.game.get_inventory()
 
         if not result:
             self.count_label.setText("加载失败")
@@ -412,17 +404,10 @@ class InventoryPage(QWidget):
             self.items_layout.addWidget(card, row, col)
 
     def _on_equip_clicked(self, inventory_id):
-        if self._equip_pending:
-            return
-
-        self._equip_pending = True
-        self.api.equip_item(inventory_id, self._on_equip_result)
-
-    def _on_equip_result(self, result):
-        self._equip_pending = False
+        result = self.game.equip_item(inventory_id)
 
         if not result:
-            QMessageBox.critical(self, "错误", "无法连接服务器")
+            QMessageBox.critical(self, "错误", "装备操作失败")
             return
 
         if result.get("success"):
@@ -443,9 +428,6 @@ class InventoryPage(QWidget):
             QMessageBox.warning(self, "失败", result.get("message", "装备失败"))
 
     def _on_reforge_clicked(self, inventory_id):
-        if self._reforge_pending:
-            return
-
         reply = QMessageBox.question(
             self, "重铸确认",
             "确定要花费 500 金币重铸这件装备的品质吗？\n重铸后品质将随机变化，特殊词条也会重新生成。",
@@ -455,14 +437,10 @@ class InventoryPage(QWidget):
         if reply != QMessageBox.Yes:
             return
 
-        self._reforge_pending = True
-        self.api.reforge_inventory(inventory_id, self._on_reforge_result)
-
-    def _on_reforge_result(self, result):
-        self._reforge_pending = False
+        result = self.game.reforge_inventory(inventory_id)
 
         if not result:
-            QMessageBox.critical(self, "错误", "无法连接服务器")
+            QMessageBox.critical(self, "错误", "重铸操作失败")
             return
 
         if result.get("success"):

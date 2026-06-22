@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QColor
 
-from api_client import ApiClient
+from game_service import GameService
 
 SLOT_NAMES = {
     "weapon": "武器",
@@ -211,14 +211,12 @@ class UpgradePage(QWidget):
     charms_updated = Signal(int)
     equipment_changed = Signal()
 
-    def __init__(self, api_client: ApiClient, parent=None):
+    def __init__(self, game_service: GameService, parent=None):
         super().__init__(parent)
-        self.api = api_client
+        self.game = game_service
         self.selected_slot = None
         self.slots = {}
         self.equipment_list = []
-        self._upgrade_pending = False
-        self._reforge_pending = False
         self._current_info = None
         self.player_scrolls = 0
         self.player_charms = 0
@@ -479,16 +477,25 @@ class UpgradePage(QWidget):
         main_layout.addWidget(right_panel, 1)
 
     def refresh_data(self):
-        self.api.get_equipment(self._on_equipment_loaded)
-        self.api.get_player(self._on_player_loaded)
+        self.equipment_list = self.game.get_equipment()
+        for equip in self.equipment_list:
+            slot_key = equip["slot"]
+            if slot_key in self.slots:
+                self.slots[slot_key].update_data(equip)
 
-    def _on_equipment_loaded(self, equipment):
-        if equipment:
-            self.equipment_list = equipment
-            for equip in equipment:
-                slot_key = equip["slot"]
-                if slot_key in self.slots:
-                    self.slots[slot_key].update_data(equip)
+        player = self.game.get_player()
+        if player:
+            if player.get("gold") is not None:
+                self.gold_updated.emit(player["gold"])
+            if player.get("enhance_stones") is not None:
+                self.stones_updated.emit(player["enhance_stones"])
+            if player.get("protect_scrolls") is not None:
+                self.player_scrolls = player["protect_scrolls"]
+                self.scrolls_updated.emit(player["protect_scrolls"])
+            if player.get("lucky_charms") is not None:
+                self.player_charms = player["lucky_charms"]
+                self.charms_updated.emit(player["lucky_charms"])
+            self._update_item_labels()
 
         if self.selected_slot and self.selected_slot in self.slots:
             self._update_upgrade_panel()
@@ -496,20 +503,6 @@ class UpgradePage(QWidget):
             weapon_slot = self.slots.get("weapon")
             if weapon_slot and not weapon_slot.is_empty:
                 self._on_slot_clicked("weapon")
-
-    def _on_player_loaded(self, player):
-        if player and player.get("gold") is not None:
-            self.gold_updated.emit(player["gold"])
-        if player and player.get("enhance_stones") is not None:
-            self.stones_updated.emit(player["enhance_stones"])
-        if player and player.get("protect_scrolls") is not None:
-            self.player_scrolls = player["protect_scrolls"]
-            self.scrolls_updated.emit(player["protect_scrolls"])
-            self._update_item_labels()
-        if player and player.get("lucky_charms") is not None:
-            self.player_charms = player["lucky_charms"]
-            self.charms_updated.emit(player["lucky_charms"])
-            self._update_item_labels()
 
     def _update_item_labels(self):
         self.protect_checkbox.setText(f"🛡 使用保护卷（失败不扣强化石）  持有：{self.player_scrolls} 张")
@@ -603,16 +596,10 @@ class UpgradePage(QWidget):
         else:
             self.affix_info_label.setText("")
 
-        self.level_info_label.setText("加载中...")
-        self.cost_label.setText("消耗金币：-")
-        self.stone_cost_label.setText("消耗强化石：-")
-        self.rate_label.setText("成功率：-")
-        self.upgrade_button.setEnabled(False)
-        self.reforge_button.setEnabled(False)
+        info = self.game.get_upgrade_info(slot.equipment_id)
+        self._apply_upgrade_info(info)
 
-        self.api.get_upgrade_info(slot.equipment_id, self._on_upgrade_info_loaded)
-
-    def _on_upgrade_info_loaded(self, info):
+    def _apply_upgrade_info(self, info):
         if not info:
             self.upgrade_button.setEnabled(False)
             return
@@ -673,15 +660,12 @@ class UpgradePage(QWidget):
         self.stone_cost_label.setText(f"消耗强化石：{info['stone_cost']} 颗")
         self._update_item_labels()
         self._refresh_rate_display()
-        if not self._upgrade_pending:
-            self.upgrade_button.setEnabled(True)
+        self.upgrade_button.setEnabled(True)
         self.upgrade_button.setText("开始强化")
-
-        if not self._reforge_pending:
-            self.reforge_button.setEnabled(True)
+        self.reforge_button.setEnabled(True)
 
     def _on_upgrade_clicked(self):
-        if not self.selected_slot or self._upgrade_pending:
+        if not self.selected_slot:
             return
 
         slot = self.slots[self.selected_slot]
@@ -691,28 +675,15 @@ class UpgradePage(QWidget):
         use_protect = self.protect_checkbox.isChecked()
         use_lucky = self.lucky_checkbox.isChecked()
 
-        self._upgrade_pending = True
-        self.result_label.setText("强化中...")
-        self.result_label.setStyleSheet("color: #aaa;")
-        self.upgrade_button.setEnabled(False)
-        self.upgrade_button.setText("强化中...")
-        self.protect_checkbox.setEnabled(False)
-        self.lucky_checkbox.setEnabled(False)
-
-        self.api.upgrade_equipment(
-            slot.equipment_id, self._on_upgrade_result,
-            use_protect_scroll=use_protect, use_lucky_charm=use_lucky
+        result = self.game.upgrade_equipment(
+            slot.equipment_id,
+            use_protect_scroll=use_protect,
+            use_lucky_charm=use_lucky
         )
 
-    def _on_upgrade_result(self, result):
-        self._upgrade_pending = False
-
         if not result:
-            self.result_label.setText("错误：无法连接服务器")
+            self.result_label.setText("错误：操作失败")
             self.result_label.setStyleSheet("color: #ff6666;")
-            self.upgrade_button.setEnabled(True)
-            self.upgrade_button.setText("开始强化")
-            self._update_item_labels()
             return
 
         if result.get("success"):
@@ -742,7 +713,7 @@ class UpgradePage(QWidget):
         self.refresh_data()
 
     def _on_reforge_clicked(self):
-        if not self.selected_slot or self._reforge_pending:
+        if not self.selected_slot:
             return
 
         slot = self.slots[self.selected_slot]
@@ -758,23 +729,11 @@ class UpgradePage(QWidget):
         if reply != QMessageBox.Yes:
             return
 
-        self._reforge_pending = True
-        self.result_label.setText("重铸中...")
-        self.result_label.setStyleSheet("color: #aaa;")
-        self.reforge_button.setEnabled(False)
-        self.reforge_button.setText("重铸中...")
-        self.upgrade_button.setEnabled(False)
-
-        self.api.reforge_equipment(slot.equipment_id, self._on_reforge_result)
-
-    def _on_reforge_result(self, result):
-        self._reforge_pending = False
+        result = self.game.reforge_equipment(slot.equipment_id)
 
         if not result:
-            self.result_label.setText("错误：无法连接服务器")
+            self.result_label.setText("错误：操作失败")
             self.result_label.setStyleSheet("color: #ff6666;")
-            self.reforge_button.setEnabled(True)
-            self.reforge_button.setText("🔨 重铸品质 (500金币)")
             return
 
         if result.get("success"):

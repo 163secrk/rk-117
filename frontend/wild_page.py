@@ -2,10 +2,10 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QSizePolicy
 )
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
-from api_client import ApiClient
+from game_service import GameService
 
 SLOT_NAMES = {
     "weapon": "武器",
@@ -53,11 +53,10 @@ class WildPage(QWidget):
     charms_updated = Signal(int)
     equipment_changed = Signal()
 
-    def __init__(self, api_client: ApiClient, parent=None):
+    def __init__(self, game_service: GameService, parent=None):
         super().__init__(parent)
-        self.api = api_client
+        self.game = game_service
         self.player_power = 0
-        self._hunt_pending = False
         self._current_monster = None
 
         self._init_ui()
@@ -314,18 +313,12 @@ class WildPage(QWidget):
         main_layout.addWidget(self.tip_label)
 
     def refresh_power(self):
-        self.api.get_player_power(self._on_power_loaded)
-
-    def _on_power_loaded(self, data):
+        data = self.game.get_player_power()
         if data and data.get("player_power") is not None:
             self.player_power = data["player_power"]
             self.power_label.setText(f"{self.player_power:,}")
 
     def _on_hunt_clicked(self):
-        if self._hunt_pending:
-            return
-
-        self._hunt_pending = True
         self.hunt_button.setEnabled(False)
         self.hunt_button.setText("搜索中...")
         self.result_label.setText("")
@@ -346,18 +339,15 @@ class WildPage(QWidget):
             }
         """)
 
-        QTimer.singleShot(300, self._do_hunt)
+        result = self.game.hunt_monster()
+        self._apply_hunt_result(result)
 
-    def _do_hunt(self):
-        self.api.hunt_monster(self._on_hunt_result)
+        self.hunt_button.setEnabled(True)
 
-    def _on_hunt_result(self, result):
-        self._hunt_pending = False
-
+    def _apply_hunt_result(self, result):
         if not result:
-            self.result_label.setText("错误：无法连接服务器")
+            self.result_label.setText("错误：操作失败")
             self.result_label.setStyleSheet("color: #ff6666;")
-            self.hunt_button.setEnabled(True)
             self.hunt_button.setText("🔍 搜索怪物")
             return
 
@@ -439,8 +429,6 @@ class WildPage(QWidget):
 
         if result.get("equipment_drop"):
             self.equipment_changed.emit()
-
-        self.hunt_button.setEnabled(True)
 
     def _show_equipment_drop(self, equip):
         slot = equip.get("slot", "")
